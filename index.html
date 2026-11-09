@@ -910,7 +910,9 @@ function senderFrameInner(now) {
   const toPx = unitToPx(W, H), set = spriteSet(0, 1);
   const t = now / 1000;
 
-  ctx.fillStyle = 'rgba(5,6,10,0.24)'; ctx.fillRect(0, 0, W, H);   // trails
+  // near-clear each frame: explicit per-dot comet trails replace the old
+  // global fade smear (which blurred the dots themselves)
+  ctx.fillStyle = 'rgba(5,6,10,0.62)'; ctx.fillRect(0, 0, W, H);
   theme.decor(ctx, W, H, t);                                        // theme layer
   drawAmbient(ctx, W, H, t);                                        // starfield motes
 
@@ -923,6 +925,7 @@ function senderFrameInner(now) {
 
   const frameSyms = idle ? null : sender.syms[k];
   const motion = idle ? THEMES.nebula.motion : theme.motion;
+  const TRAIL_D = 0.30, TRAIL_A = [0.26, 0.16, 0.07];
   for (let i = 0; i < PC.SLOTS; i++) {
     const jt = sender.jitter[i];
     const pos = PC.slotPos(i);
@@ -938,6 +941,26 @@ function senderFrameInner(now) {
       : theme.twinkle(ph, i, t);
     // depth dim: far hue dots dimmer, grays full-value (luminance class safety)
     const dim = (idle || frameSyms[i] >= 6) ? 1 : 0.70 + 0.30 * PC.slotDepth(i);
+
+    // comet trail: direction from the dot's true motion history (analytic,
+    // so paths curve correctly), offset amplified to read at small amplitudes
+    // — a motion-blur exaggeration. Distance-gated: still dots (settle) get
+    // zero-length trails and stay crisp.
+    const movePx = um * ampI;
+    const tGain = Math.min(1, movePx / (0.13 * pitch));
+    if (tGain > 0.06) {
+      const sprite = idle ? set.anchor : set.syms[frameSyms[i]];
+      for (let g = 1; g <= 3; g++) {
+        const ug = motion(jt, i, t - g * TRAIL_D, pos);
+        const ugm = Math.hypot(ug[0], ug[1]);
+        const s = ugm > 1 ? 1 / ugm : 1;
+        const ox = (ug[0] * s - u[0]) * ampI * 2.0;
+        const oy = (ug[1] * s - u[1]) * ampI * 2.0;
+        ctx.globalAlpha = TRAIL_A[g - 1] * tGain * (idle ? tw : Math.max(dim, 0.7));
+        blit(ctx, sprite, p[0] + dx + ox, p[1] + dy + oy, ri * (0.78 - 0.15 * g));
+      }
+    }
+
     if (idle) {
       ctx.globalAlpha = tw;
       blit(ctx, set.anchor, p[0] + dx, p[1] + dy, ri * 0.5); // white motes, free swarm
