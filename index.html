@@ -238,7 +238,7 @@
 </main>
 <div class="footer">ParticleCode prototype — encode light, decode with a lens.</div>
 
-<script src="codec.js?v=5"></script>
+<script src="codec.js?v=7"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -592,33 +592,31 @@ const THEMES = {
       const P = (u, v) => [ox + u * S, oy + v * S];
       const flick = 0.85 + 0.15 * Math.sin(t * 7.3) * Math.sin(t * 3.1 + 1.2);
       // fire glow under-lighting the whole scene — strong enough to read as heat
-      const g = ctx.createRadialGradient(...P(0.5, 0.98), 0, ...P(0.5, 0.98), 0.72 * S);
-      g.addColorStop(0, 'rgba(255,150,60,' + (0.19 * flick).toFixed(3) + ')');
+      const g = ctx.createRadialGradient(...P(0.5, 0.98), 0, ...P(0.5, 0.98), 0.78 * S);
+      g.addColorStop(0, 'rgba(255,150,60,' + (0.23 * flick).toFixed(3) + ')');
       g.addColorStop(0.5, 'rgba(255,110,40,' + (0.08 * flick).toFixed(3) + ')');
       g.addColorStop(1, 'rgba(255,90,30,0)');
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-      // logs
+      // log stack as wide as the blaze
       ctx.fillStyle = '#3a2417';
-      for (const rot of [0.28, -0.32, 0.05]) {
-        const c = P(0.5, 0.958);
+      for (const rot of [0.22, -0.26, 0.03]) {
+        const c = P(0.5, 0.962);
         ctx.save(); ctx.translate(c[0], c[1]); ctx.rotate(rot);
-        ctx.beginPath(); ctx.roundRect(-0.085 * S, -0.007 * S, 0.17 * S, 0.014 * S, 0.006 * S); ctx.fill();
+        ctx.beginPath(); ctx.roundRect(-0.29 * S, -0.007 * S, 0.58 * S, 0.014 * S, 0.006 * S); ctx.fill();
         ctx.restore();
       }
-      // coal bed
-      for (let k = 0; k < 22; k++) {
-        const p = P(0.36 + 0.28 * h1(k * 3 + 0.5), 0.952 + 0.012 * h1(k * 5 + 2));
+      // coal bed across the base
+      for (let k = 0; k < 30; k++) {
+        const p = P(0.24 + 0.52 * h1(k * 3 + 0.5), 0.953 + 0.012 * h1(k * 5 + 2));
         ctx.globalAlpha = (0.25 + 0.35 * h1(k + 7)) * (0.7 + 0.3 * Math.sin(t * 4 + k * 2.4));
         ctx.fillStyle = h1(k * 2 + 3) > 0.5 ? 'rgb(255,120,50)' : 'rgb(255,80,40)';
         ctx.beginPath(); ctx.arc(p[0], p[1], 1.6 + 1.2 * h1(k + 1), 0, 6.2832); ctx.fill();
       }
-      // the fire pit: a modest blaze at the base — the DATA particles are the
-      // main flames now, so decor stays low and small
-      for (let i = 0; i < 22; i++) {
-        const age = (t * 0.7 + i / 22) % 1;
-        const spread = 0.05 + 0.06 * age;
-        const u = 0.5 + Math.sin(t * 2.6 + i * 2.39) * spread * (0.4 + age) + (h1(i * 7) - 0.5) * 0.04;
-        const v = 0.968 - age * 0.16;                        // up to y ≈ 0.81
+      // low licks of decor flame along the log line (the DATA mosaic is the blaze)
+      for (let i = 0; i < 26; i++) {
+        const age = (t * 0.7 + i / 26) % 1;
+        const u = 0.26 + 0.48 * h1(i * 7 + 1) + Math.sin(t * 2.6 + i * 2.39) * 0.02;
+        const v = 0.972 - age * 0.075;                        // hugs the logs
         const p = P(u, v);
         const size = (2.2 * (1 - age) + 0.8) * (0.7 + 0.3 * h1(i * 3 + 4));
         ctx.globalAlpha = (1 - age) * (0.45 + 0.2 * Math.sin(t * 9 + i * 5)) * flick;
@@ -636,9 +634,9 @@ const THEMES = {
       }
       // sparks climbing high through the smoke, fading slowly
       ctx.fillStyle = 'rgb(255,214,130)';
-      for (let i = 0; i < 10; i++) {
-        const age = (t * 0.36 + i / 10) % 1;
-        const p = P(0.5 + Math.sin(t * 4 + i * 9.1) * 0.09 * (0.3 + age), 0.95 - age * 0.50);
+      for (let i = 0; i < 16; i++) {
+        const age = (t * 0.36 + i / 16) % 1;
+        const p = P(0.5 + Math.sin(t * 4 + i * 9.1) * 0.14 * (0.3 + age), 0.95 - age * 0.50);
         ctx.globalAlpha = Math.pow(1 - age, 0.6) * 0.85;
         ctx.beginPath(); ctx.arc(p[0], p[1], 1.1 + 0.6 * h1(i + 6), 0, 6.2832); ctx.fill();
       }

@@ -132,17 +132,31 @@
         pts.push(...ellipsePts(rx, ry, n, (rx * 31.7 / 6.2832) % 1));
       return pts.slice(0, SLOTS);
     },
-    // flame silhouette: base-heavy teardrop tapering to a tip, denser at base
+    // three-tongue blaze: a wide campfire, not a candle — broad base the
+    // width of the log stack, three flame lobes of different heights
+    // (center tallest, sides leaning outward), base-heavy density.
     fire() {
       const rnd = makeRnd(0x7E1A00D5);
-      const w = y => 0.27 * Math.pow(Math.max(0, (y - 0.13) / 0.77), 0.72);
-      const pts = poissonFill(rnd, SLOTS, 0.036, r => {
-        const bias = Math.pow(r(), 0.62);                     // denser low (hot base)
-        const y = 0.15 + bias * 0.74;
-        const x = 0.5 + (r() * 2 - 1) * w(y) * (0.75 + 0.25 * Math.sin(y * 17));
-        return [Math.min(0.92, Math.max(0.08, x)), y];
+      const baseY = 0.885;
+      const lobes = [
+        { cx: 0.305, hw: 0.105, tip: 0.50, lean: -0.045 },
+        { cx: 0.500, hw: 0.150, tip: 0.27, lean: 0 },
+        { cx: 0.695, hw: 0.105, tip: 0.52, lean: 0.045 }
+      ];
+      const inLobe = (x, y) => lobes.some(L => {
+        const t = (baseY - y) / (baseY - L.tip);              // 0 base → 1 tip
+        if (t < 0 || t > 1) return false;
+        const cx = L.cx + L.lean * t;                          // tongues lean out
+        return Math.abs(x - cx) < L.hw * Math.pow(1 - t, 0.62);
       });
-      return pts;
+      return poissonFill(rnd, SLOTS, 0.034, r => {
+        for (let tries = 0; tries < 60; tries++) {
+          const y = baseY - Math.pow(r(), 1.6) * (baseY - 0.27);   // base-heavy
+          const x = 0.12 + r() * 0.76;
+          if (y < baseY - 0.015 && inLobe(x, y)) return [x, y];
+        }
+        return [0.5, 0.845];
+      });
     },
     // lumpy cloud band on top + staggered rain columns below
     rain() {
