@@ -123,6 +123,7 @@
             <option value="fire">🔥 Campfire</option>
             <option value="solar">🌞 Solar system</option>
             <option value="clouds">☁️ Clouds</option>
+            <option value="rain">🌧️ Rainstorm</option>
           </select>
         </label>
         <label>Sway
@@ -286,14 +287,14 @@ function blit(ctx, sprite, x, y, r) {
   const d = (r / CORE) * 2;
   ctx.drawImage(sprite, x - d / 2, y - d / 2, d, d);
 }
-/* Zone-styled data dot. In the fire scene the particles themselves are the
-   flames and smoke: slim tall tongues at the base (draw radius is halved
-   before the 1.7x vertical stretch, so the stretched bright core stays
-   inside 0.52x local spacing — clear of every neighbour's sampling disc),
-   embers in the middle, soft-haloed smoke above. Zones are slot properties
-   (unit-y), so the live sender and the simulator render identical shapes. */
-function drawDataDot(ctx, set, sym, x, y, r, uy, isFire, alpha) {
-  if (isFire && uy > 0.62) {                        // flame zone
+/* Zone-styled data dot. Scenes assign rendering by slot zone (position is
+   public — no protocol change). Fire: slim rising flame tongues at the base
+   (draw radius halved before the vertical stretch so the bright core stays
+   clear of every neighbour's sampling disc), embers, smoke puffs above.
+   Rain: cloud puffs on top, falling streaks with motion tails below.
+   The live sender and the simulator render identical shapes. */
+function drawDataDot(ctx, set, sym, x, y, r, uy, mode, alpha) {
+  if (mode === 'fire' && uy > 0.62) {               // flame zone
     const c = SYM_RGB[sym];
     const g = ctx.createLinearGradient(x, y + r * 0.6, x, y + r * 2.7);
     g.addColorStop(0, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',0.22)');
@@ -306,9 +307,22 @@ function drawDataDot(ctx, set, sym, x, y, r, uy, isFire, alpha) {
     ctx.scale(0.5, 1.7);                            // slim rising tongue
     blit(ctx, set.syms[sym], 0, 0, r * 0.5);
     ctx.restore();
-  } else if (isFire && uy < 0.45) {                 // smoke zone
-    ctx.globalAlpha = alpha * 0.30;
-    blit(ctx, set.syms[sym], x, y + r * 0.18, r * 1.85);   // soft under-halo
+  } else if (mode === 'rain' && uy > 0.5) {         // falling drops
+    const c = SYM_RGB[sym];
+    const g = ctx.createLinearGradient(x, y - r * 2.4, x, y - r * 0.4);
+    g.addColorStop(0, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',0)');
+    g.addColorStop(1, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',0.22)');
+    ctx.fillStyle = g;                              // motion tail (below value floor)
+    ctx.fillRect(x - r * 0.35, y - r * 2.4, r * 0.7, r * 2.0);
+    ctx.globalAlpha = alpha;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(0.55, 1.45);                          // slim falling streak
+    blit(ctx, set.syms[sym], 0, 0, r * 0.5);
+    ctx.restore();
+  } else if ((mode === 'fire' && uy < 0.45) || (mode === 'rain' && uy < 0.42)) {
+    ctx.globalAlpha = alpha * 0.22;                 // smoke puff / cloud puff
+    blit(ctx, set.syms[sym], x, y + r * 0.15, r * 1.6);
     ctx.globalAlpha = alpha;
     blit(ctx, set.syms[sym], x, y, r * 0.92);
   } else {                                          // round: embers + all other themes
@@ -400,11 +414,11 @@ function drawScene(ctx, W, H, syms, opts) {
     blit(ctx, set.sats[i], p[0], p[1], A.satR * Math.min(W, H));
   });
   // depth dim lives inside drawDataDot's alpha; zones apply in the fire scene
-  const isFire = (opts.themeName || 'nebula') === 'fire';
+  const mode = (opts.themeName === 'fire' || opts.themeName === 'rain') ? opts.themeName : null;
   for (let i = 0; i < PC.SLOTS; i++) {
     const pos = PC.slotPos(i), p = toPx(pos[0], pos[1]);
     drawDataDot(ctx, set, syms[i], p[0], p[1], PC.dataR(i) * Math.min(W, H),
-                pos[1], isFire, syms[i] < 6 ? 0.70 + 0.30 * PC.slotDepth(i) : 1);
+                pos[1], mode, syms[i] < 6 ? 0.70 + 0.30 * PC.slotDepth(i) : 1);
   }
   ctx.globalAlpha = 1;
 }
@@ -537,10 +551,10 @@ const THEMES = {
       const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
       const P = (u, v) => [ox + u * S, oy + v * S];
       const flick = 0.85 + 0.15 * Math.sin(t * 7.3) * Math.sin(t * 3.1 + 1.2);
-      // fire glow under-lighting the whole scene
-      const g = ctx.createRadialGradient(...P(0.5, 0.98), 0, ...P(0.5, 0.98), 0.62 * S);
-      g.addColorStop(0, 'rgba(255,150,60,' + (0.16 * flick).toFixed(3) + ')');
-      g.addColorStop(0.55, 'rgba(255,110,40,' + (0.06 * flick).toFixed(3) + ')');
+      // fire glow under-lighting the whole scene — strong enough to read as heat
+      const g = ctx.createRadialGradient(...P(0.5, 0.98), 0, ...P(0.5, 0.98), 0.72 * S);
+      g.addColorStop(0, 'rgba(255,150,60,' + (0.24 * flick).toFixed(3) + ')');
+      g.addColorStop(0.5, 'rgba(255,110,40,' + (0.10 * flick).toFixed(3) + ')');
       g.addColorStop(1, 'rgba(255,90,30,0)');
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
       // logs
@@ -633,6 +647,73 @@ const THEMES = {
       ctx.globalAlpha = 1;
     }
   },
+  rain: {
+    label: 'Rainstorm',
+    motion: (jt, i, t, pos) => {
+      if (pos[1] < 0.42) {                            // cloud deck: slow drift
+        const band = Math.sin(pos[1] * 7 + 0.9);
+        return [0.4 + 0.3 * band + 0.12 * Math.sin(t * jt.w + jt.p[0]),
+                0.10 * Math.sin(t * jt.w * 0.6 + jt.p[2])];
+      }
+      // falling drops: downward + wind slant; near (deep) drops fall faster
+      const fall = 0.55 + 0.35 * PC.slotDepth(i);
+      return [0.15 + 0.1 * Math.sin(t * jt.w * 0.8 + jt.p[1]), fall];
+    },
+    settle: t => 1 - Math.pow(1 - t, 3),
+    twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.88 + 0.12 * Math.sin(t * 2 + i) : 1,
+    decor(ctx, W, H, t) {
+      const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
+      const P = (u, v) => [ox + u * S, oy + v * S];
+      // heavy cloud deck across the top
+      for (let k = 0; k < 10; k++) {
+        const p = P(0.1 + 0.8 * h1(k * 3 + 0.3), 0.10 + 0.16 * h1(k * 7 + 1));
+        const r = (0.09 + 0.10 * h1(k + 2)) * S;
+        const g = ctx.createRadialGradient(p[0], p[1], 0, p[0], p[1], r);
+        g.addColorStop(0, 'rgba(120,135,160,' + (0.10 + 0.08 * h1(k * 5 + 4)).toFixed(3) + ')');
+        g.addColorStop(1, 'rgba(120,135,160,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 6.2832); ctx.fill();
+      }
+      // continuous rain: thin slanted falling streaks (dim, below value floor)
+      ctx.strokeStyle = 'rgba(150,175,205,0.15)';
+      ctx.lineWidth = 1;
+      for (let k = 0; k < 46; k++) {
+        const sp = 0.55 + 0.5 * h1(k + 3);
+        const x = h1(k * 9 + 1) * W;
+        const y = (((t * sp * 1.4 + h1(k * 4 + 7)) % 1.1) - 0.05) * H;
+        const len = 8 + 10 * h1(k * 2 + 5);
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 1.6, y + len); ctx.stroke();
+      }
+      // splashes at the base
+      for (let k = 0; k < 8; k++) {
+        const cyc = (t * 0.9 + h1(k + 11)) % 1;
+        const x = (0.1 + 0.8 * h1(k * 6 + 2)) * W, y = 0.965 * H;
+        ctx.globalAlpha = (1 - cyc) * 0.3;
+        ctx.beginPath();
+        ctx.ellipse(x, y, 1 + cyc * 5, (1 + cyc * 5) * 0.35, 0, 0, 6.2832);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      // lightning: rare double-flash — dim enough to stay under the sampling floor
+      const lt = t % 9;
+      if (lt < 0.10 || (lt > 0.18 && lt < 0.26)) {
+        ctx.fillStyle = 'rgba(200,215,255,0.15)';
+        ctx.fillRect(0, 0, W, H);
+        const seed = Math.floor(t / 9);
+        ctx.strokeStyle = 'rgba(225,235,255,0.7)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        let bx = (0.3 + 0.4 * h1(seed * 7 + 3)) * W, by = 0.04 * H;
+        ctx.moveTo(bx, by);
+        for (let s = 0; s < 7; s++) {
+          bx += (h1(seed * 13 + s) - 0.5) * 34;
+          by += 0.09 * H;
+          ctx.lineTo(bx, by);
+        }
+        ctx.stroke();
+      }
+    }
+  },
   clouds: {
     label: 'Clouds',
     // laminar wind bands: drift depends on the row, like layered air currents
@@ -676,6 +757,7 @@ const AFFINITY = {                    // weights per symbol: r y g c b m gL gD
   nebula: [1, 1, 1, 1, 1, 1, 1, 1],
   rings:  [1, 1, 1, 1, 1, 1, 0.5, 0.5],
   clouds: [0, 0, 1, 3, 3, 1, 2, 2],
+  rain:   [0, 0, 1.5, 3, 3, 1, 2, 2],
   jet:    [0.5, 0, 1, 2, 2, 1, 3, 2]
 };
 function pickThemeFor(hist) {
@@ -785,7 +867,7 @@ function senderFrameInner(now) {
     } else {
       drawDataDot(ctx, set, frameSyms[i], p[0] + dx, p[1] + dy,
                   ri * (1 + 0.07 * sway * Math.sin(t * 2.2 + i)), pos[1],
-                  themeName === 'fire', tw * dim);
+                  (themeName === 'fire' || themeName === 'rain') ? themeName : null, tw * dim);
     }
   }
 
