@@ -233,7 +233,7 @@
 </main>
 <div class="footer">ParticleCode prototype — encode light, decode with a lens.</div>
 
-<script src="codec.js?v=2"></script>
+<script src="codec.js?v=3"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -368,8 +368,12 @@ function drawScene(ctx, W, H, syms, opts) {
   });
   for (let i = 0; i < PC.SLOTS; i++) {
     const pos = PC.slotPos(i), p = toPx(pos[0], pos[1]);
+    // depth dim: far hue dots render dimmer (grays stay full-value — their
+    // luminance class must not drift)
+    ctx.globalAlpha = syms[i] < 6 ? 0.70 + 0.30 * PC.slotDepth(i) : 1;
     blit(ctx, set.syms[syms[i]], p[0], p[1], PC.dataR(i) * Math.min(W, H));
   }
+  ctx.globalAlpha = 1;
 }
 
 /* ============================== themes ==============================
@@ -607,7 +611,9 @@ function senderFrameInner(now) {
     const tw = idle
       ? 0.55 + 0.45 * Math.sin(t * 1.6 + i * 1.31)          // idle: deep twinkle
       : theme.twinkle(ph, i, t);
-    ctx.globalAlpha = tw;
+    // depth dim: far hue dots dimmer, grays full-value (luminance class safety)
+    const dim = (idle || frameSyms[i] >= 6) ? 1 : 0.70 + 0.30 * PC.slotDepth(i);
+    ctx.globalAlpha = tw * dim;
     if (idle) {
       blit(ctx, set.anchor, p[0] + dx, p[1] + dy, ri * 0.5); // white motes, free swarm
     } else {

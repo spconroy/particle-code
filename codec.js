@@ -99,11 +99,15 @@
 
   const slotHash = i => { const x = Math.sin((i + 1) * 91.3) * 47453.7; return x - Math.floor(x); };
 
+  // per-slot depth in [0,1]: near particles render bigger, brighter and wander
+  // further; far ones are small, dim and steady — a 3D parallax cue.
+  function slotDepth(i) { return slotHash(i + 0.313); }
+
   function slotPos(i) { return SLOT_POS[i % SLOTS]; }
   function slotDiscR(i) { return 0.42 * SLOT_MD[i]; }           // sampling disc
-  function slotAmp(i) { return 0.35 * SLOT_MD[i]; }             // wander budget
-  function dataR(i) {                                            // varied, spacing-capped
-    return Math.min(0.24 * MD_MEAN * (0.85 + 0.3 * slotHash(i)), 0.60 * SLOT_MD[i]);
+  function slotAmp(i) { return 0.35 * SLOT_MD[i] * (0.5 + 0.6 * slotDepth(i)); }
+  function dataR(i) {                                            // depth-sized, spacing-capped
+    return Math.min(0.24 * MD_MEAN * (0.62 + 0.93 * slotDepth(i)), 0.56 * SLOT_MD[i]);
   }
   function cellPitch() { return MD_MEAN; }
 
@@ -318,7 +322,7 @@
 
   return {
     COLS, ROWS, SLOTS, STATE_BYTES, RS_N, RS_K, RS_NSYM, PAYLOAD,
-    SYMS, LAYOUT, slotPos, slotDiscR, slotAmp, cellPitch, dataR,
+    SYMS, LAYOUT, slotPos, slotDiscR, slotAmp, slotDepth, cellPitch, dataR,
     encodeMessage, decodeState, stateToSymbols, symbolsToState,
     solveHomography, hsvToRgb, crc16,
     _rs: { rsParity, rsDecode }

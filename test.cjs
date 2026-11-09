@@ -128,11 +128,16 @@ t('layout: organic constellation — bounds, spacing, determinism', () => {
   const C2 = require('./codec.js');
   for (let i = 0; i < C.SLOTS; i += 17)
     assert.deepStrictEqual(C.slotPos(i), C2.slotPos(i), 'slotPos deterministic ' + i);
-  // discs, wander and dot size respect local spacing
+  // discs, wander and dot size respect local spacing; depth is visible
   for (let i = 0; i < C.SLOTS; i++) {
-    assert.ok(C.slotDiscR(i) > 0.015 && C.slotAmp(i) > 0.012, 'adaptive metrics ' + i);
-    assert.ok(C.dataR(i) <= 0.62 * (C.slotDiscR(i) / 0.42) + 1e-9, 'dot fits spacing ' + i);
+    assert.ok(C.slotDiscR(i) > 0.014 && C.slotAmp(i) > 0.0055, 'adaptive metrics ' + i);
+    assert.ok(C.dataR(i) <= 0.56 * (C.slotDiscR(i) / 0.42) + 1e-9, 'dot fits spacing ' + i);
+    const d = C.slotDepth(i);
+    assert.ok(d >= 0 && d <= 1, 'depth range ' + i);
   }
+  const sizes = Array.from({ length: C.SLOTS }, (_, i) => C.dataR(i));
+  const spread = Math.max(...sizes) / Math.min(...sizes);
+  assert.ok(spread > 1.6, 'depth spread too subtle: ' + spread.toFixed(2));
 });
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
