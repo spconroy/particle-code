@@ -116,6 +116,7 @@
         <button id="btnBeam" class="act primary">Start beaming</button>
         <label>Theme
           <select id="themeSel">
+            <option value="auto">✨ Auto (match message)</option>
             <option value="nebula">🌌 Nebula</option>
             <option value="rings">🪐 Orbit rings</option>
             <option value="jet">✈️ Jet stream</option>
@@ -603,14 +604,49 @@ const THEMES = {
 let themeName = 'nebula';
 try {
   const saved = localStorage.getItem('pcTheme');
-  if (saved && THEMES[saved]) themeName = saved;
+  if (saved && (THEMES[saved] || saved === 'auto')) themeName = saved;
 } catch (e) { /* private mode */ }
-let theme = THEMES[themeName];
+
+/* ---- scene director: score each theme against the message's palette ----
+   The payload's symbol distribution is a color fingerprint (ASCII text,
+   URLs, Wi-Fi strings, padding tails all differ). Auto picks the scene
+   whose world suits what the message actually is. */
+const AFFINITY = {                    // weights per symbol: r y g c b m gL gD
+  solar:  [3, 3, 0, 0, 0, 1, 0, 0],
+  fire:   [3, 3, 0, 0, 0, 1, 1, 0],
+  nebula: [1, 1, 1, 1, 1, 1, 1, 1],
+  rings:  [1, 1, 1, 1, 1, 1, 0.5, 0.5],
+  clouds: [0, 0, 1, 3, 3, 1, 2, 2],
+  jet:    [0.5, 0, 1, 2, 2, 1, 3, 2]
+};
+function pickThemeFor(hist) {
+  let best = 'nebula', bestScore = -1;
+  for (const [name, w] of Object.entries(AFFINITY)) {
+    let s = 0, tot = 0;
+    for (let i = 0; i < 8; i++) { s += hist[i] * w[i]; tot += hist[i]; }
+    s /= Math.max(1, tot);
+    if (s > bestScore) { bestScore = s; best = name; }
+  }
+  return best;
+}
+function updateTheme(hist) {
+  if (themeName === 'auto') {
+    sender.autoTheme = hist ? pickThemeFor(hist) : 'nebula';
+    theme = THEMES[sender.autoTheme];
+    if (hist) {
+      const warm = hist[0] + hist[1], n = hist.reduce((a, b) => a + b, 0);
+      log('auto scene: ' + theme.label.toLowerCase() + ' (' + Math.round(100 * warm / n) + '% warm hues)');
+    }
+  } else {
+    theme = THEMES[themeName];
+  }
+}
+let theme = THEMES[themeName === 'auto' ? 'nebula' : themeName];
 
 /* ============================== sender ============================== */
 const sender = {
   running: false, raf: 0, states: [], syms: [], jitter: null, t0: 0,
-  session: 0, lastText: null
+  session: 0, lastText: null, autoTheme: 'nebula'
 };
 const sendCanvas = $('sendCanvas');
 const STATE_MS = 1200, FLOAT_FRAC = 0.45;
@@ -695,7 +731,7 @@ function senderFrameInner(now) {
 
   $('sendHud').innerHTML = idle
     ? 'idle — type something to encode it into the cloud'
-    : `${theme.label.toLowerCase()} · block <b>${k + 1}/${sender.states.length}</b>` +
+    : `${themeName === 'auto' ? 'auto · ' : ''}${theme.label.toLowerCase()} · block <b>${k + 1}/${sender.states.length}</b>` +
       ` · <b>60 B</b>/state · msg #${sender.session}` +
       ` · ${ph < FLOAT_FRAC ? 'swirl' : '<b>settled</b>'}`;
 }
@@ -717,6 +753,9 @@ function reEncode() {
   sender.states = PC.encodeMessage(text, sender.session);
   sender.syms = sender.states.map(st => PC.stateToSymbols(st));
   sender.jitter = sender.jitter || makeJitter(PC.SLOTS);
+  const hist = new Array(8).fill(0);
+  for (const sy of sender.syms) for (const s of sy) hist[s]++;
+  updateTheme(hist);
   const est = Math.ceil(sender.states.length * STATE_MS * 2.5 / 1000);
   $('cap').textContent = `${text.length} chars → ${sender.states.length} block(s) · ~${est}s per full pass`;
 }
@@ -864,9 +903,17 @@ $('btnBeam').addEventListener('click', () => sender.running ? stopBeaming() : st
 $('themeSel').value = themeName;
 $('themeSel').addEventListener('change', () => {
   themeName = $('themeSel').value;
-  theme = THEMES[themeName];
   try { localStorage.setItem('pcTheme', themeName); } catch (e) { }
-  log('theme: ' + theme.label.toLowerCase());
+  if (themeName === 'auto') {
+    updateTheme(sender.syms.length ? (() => {
+      const h = new Array(8).fill(0);
+      for (const sy of sender.syms) for (const s of sy) h[s]++;
+      return h;
+    })() : null);
+  } else {
+    updateTheme(null);
+    log('theme: ' + theme.label.toLowerCase());
+  }
 });
 
 function sizeSendCanvas() {
