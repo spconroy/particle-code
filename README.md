@@ -43,7 +43,7 @@ then decodes it through the exact production pipeline.
 |---|---|---|
 | Symbols | 8 colors = 3 bits/particle | A camera channel (auto white balance, exposure, chroma subsampling) can't carry 24-bit color; decades of color-barcode research (Microsoft HCCB, COBRA, PixNet) converge on small palettes + strong ECC |
 | Palette | 6 hues on a 60° wheel + 2 grays | Hue maximally separated; grays survive white-balance drift because they're luminance-coded |
-| Cell grid | 160 anchored slots (16×10), particles wander within their cell | Symbol identity comes from geometry — zero bits spent on ordering |
+| Constellation | 160 slots from a seeded Poisson-disc sample in a center-dense ellipse — no lattice | Symbol identity comes from geometry; discs/wander/dot-size adapt to local spacing; the point set is deterministic so both ends agree |
 | Localization | Solid white capsule bar (TL) + 3 solid circles, detected by rotation-invariant **area ratio** (~2.8× a single), then a 4-point **homography** | Finder patterns QR-style: crisp, glare-resistant, perspective-rectifying; the bar disambiguates orientation |
 | Hue calibration | 3 RGB satellites of known hue measured per frame → global hue-rotation correction before classification | Defeats auto white balance |
 | Timing | States dwell ~1.2 s: 45% swirl, then settle exactly onto anchors; temporal voting across frames | Blurred transition frames are simply discarded; the settle phase is the clean sample |
@@ -67,7 +67,7 @@ URL · `WIFI:` (with proper `\\;,:"` escaping) · vCard 3.0 · `mailto:` · `tel
 - `index.html` — the whole app: sender (canvas particle renderer) + receiver (camera
   pipeline with live overlay) + built-in simulator. Zero dependencies; works from any
   static host.
-- `codec.js` — the format: palette, layout geometry, CRC-16, from-scratch GF(256)
+- `codec.js` — the format: palette, organic slot layout (seeded Poisson-disc), CRC-16, from-scratch GF(256)
   Reed–Solomon encoder/decoder, block framing, homography solver. Runs in browser and Node.
 - `test.cjs` — verification harness: `node test.cjs`
 

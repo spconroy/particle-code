@@ -9,10 +9,10 @@
  * Palette: 6 hues (0/60/120/180/240/300 deg, s=1, v=0.88) + 2 grays (0.80 / 0.48).
  * White is reserved for the 4 corner anchors; near-black is background.
  *
- * Layout (unit square, y down):
- *   data grid: 16 x 10 cell centers inside [0.10,0.12]-[0.90,0.88]
- *   anchors:   TL pair (0.045,0.055)+(0.135,0.055)  [pair disambiguates orientation]
- *              TR (0.955,0.055)  BR (0.955,0.945)  BL (0.045,0.945)
+ * Layout (unit square, y down): 160 slots from a seeded Poisson-disc sample
+ * inside an ellipse (center-dense, no lattice). The point set is deterministic,
+ * so encoder and decoder agree; discs/wander/dot-size adapt to local spacing.
+ *   anchors: TL capsule bar + TR (0.955,0.055) BR (0.955,0.945) BL (0.045,0.945)
  *   hue-calibration satellites: red (0.32,0.055) green (0.50,0.055) blue (0.68,0.055)
  */
 (function (root, factory) {
@@ -35,7 +35,10 @@
   ];
 
   const LAYOUT = {
-    gridX0: 0.10, gridY0: 0.12, gridX1: 0.90, gridY1: 0.88,
+    // organic constellation: 160 slots from a seeded Poisson-disc sample inside
+    // an ellipse (center-dense), generated below. No lattice — but the point
+    // set is deterministic, so encoder and decoder agree by construction.
+    gridX0: 0.10, gridY0: 0.12, gridX1: 0.90, gridY1: 0.88,   // slot bounds
     // TL marker is a solid white capsule bar — one blob, ~2.8x a single
     // anchor's area, rotation-invariant to detect by area ratio.
     bar: { c: [0.09, 0.055], len: 0.15, th: 0.062 },
@@ -49,20 +52,60 @@
   };
   LAYOUT.TL = LAYOUT.bar.c; // the homography corner
 
-  function slotPos(i) {
-    const cw = (LAYOUT.gridX1 - LAYOUT.gridX0) / COLS;
-    const ch = (LAYOUT.gridY1 - LAYOUT.gridY0) / ROWS;
-    return [LAYOUT.gridX0 + ((i % COLS) + 0.5) * cw,
-            LAYOUT.gridY0 + (((i / COLS) | 0) + 0.5) * ch];
+  // ---- deterministic organic slot placement (seeded, shared by both ends) ----
+  const SLOT_POS = (function () {
+    let seed = 0x9E3779B9;
+    const rnd = () => {
+      seed = seed + 0x6D2B79F5 | 0;
+      let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+    const pts = [];
+    let minD = 0.052;
+    while (pts.length < SLOTS && minD > 0.02) {
+      pts.length = 0;
+      let tries = 0;
+      while (pts.length < SLOTS && tries++ < 80000) {
+        const a = rnd() * 6.2832, rr = Math.pow(rnd(), 0.7);   // mild center bias
+        const x = 0.5 + Math.cos(a) * rr * 0.40;
+        const y = 0.5 + Math.sin(a) * rr * 0.35;
+        let ok = true;
+        for (let k = 0; k < pts.length; k++) {
+          const dx = pts[k][0] - x, dy = pts[k][1] - y;
+          if (dx * dx + dy * dy < minD * minD) { ok = false; break; }
+        }
+        if (ok) pts.push([x, y]);
+      }
+      minD *= 0.93;                                            // relax until 160 fit
+    }
+    return pts;
+  })();
+
+  // per-slot nearest-neighbour spacing → adaptive discs, wander and dot size
+  const SLOT_MD = new Float64Array(SLOTS);
+  (function () {
+    for (let i = 0; i < SLOTS; i++) {
+      let m = 1;
+      for (let j = 0; j < SLOTS; j++) {
+        if (j === i) continue;
+        const d = Math.hypot(SLOT_POS[j][0] - SLOT_POS[i][0], SLOT_POS[j][1] - SLOT_POS[i][1]);
+        if (d < m) m = d;
+      }
+      SLOT_MD[i] = m;
+    }
+  })();
+  const MD_MEAN = SLOT_MD.reduce((a, b) => a + b, 0) / SLOTS;
+
+  const slotHash = i => { const x = Math.sin((i + 1) * 91.3) * 47453.7; return x - Math.floor(x); };
+
+  function slotPos(i) { return SLOT_POS[i % SLOTS]; }
+  function slotDiscR(i) { return 0.42 * SLOT_MD[i]; }           // sampling disc
+  function slotAmp(i) { return 0.35 * SLOT_MD[i]; }             // wander budget
+  function dataR(i) {                                            // varied, spacing-capped
+    return Math.min(0.24 * MD_MEAN * (0.85 + 0.3 * slotHash(i)), 0.60 * SLOT_MD[i]);
   }
-  function cellPitch() {
-    return Math.min((LAYOUT.gridX1 - LAYOUT.gridX0) / COLS,
-                    (LAYOUT.gridY1 - LAYOUT.gridY0) / ROWS);
-  }
-  // 0.24 x pitch: small enough to read as fluid, large enough that the core
-  // dominates its 0.34-pitch sampling disc; halo (1.72r) still clears every
-  // neighbor's disc, which begins 0.66 pitch away.
-  function dataR() { return 0.24 * cellPitch(); }
+  function cellPitch() { return MD_MEAN; }
 
   // ------------------------------------------------------------------ GF(256)
   const EXP = new Uint8Array(512), LOG = new Uint8Array(256);
@@ -275,7 +318,7 @@
 
   return {
     COLS, ROWS, SLOTS, STATE_BYTES, RS_N, RS_K, RS_NSYM, PAYLOAD,
-    SYMS, LAYOUT, slotPos, cellPitch, dataR,
+    SYMS, LAYOUT, slotPos, slotDiscR, slotAmp, cellPitch, dataR,
     encodeMessage, decodeState, stateToSymbols, symbolsToState,
     solveHomography, hsvToRgb, crc16,
     _rs: { rsParity, rsDecode }

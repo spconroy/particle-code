@@ -110,17 +110,29 @@ t('homography: recovers a known projective map to <1e-6 px', () => {
 });
 
 // ---------------------------------------------------------------- layout sanity
-t('layout: slots inside grid box, anchors/satellites outside it', () => {
+t('layout: organic constellation — bounds, spacing, determinism', () => {
+  const pts = [];
   for (let i = 0; i < C.SLOTS; i++) {
     const [x, y] = C.slotPos(i);
-    assert.ok(x > C.LAYOUT.gridX0 && x < C.LAYOUT.gridX1 && y > C.LAYOUT.gridY0 && y < C.LAYOUT.gridY1, 'slot ' + i);
+    assert.ok(x > 0.08 && x < 0.92 && y > 0.11 && y < 0.89, 'slot bounds ' + i + ': ' + x + ',' + y);
+    pts.push([x, y]);
   }
-  const outside = [...C.LAYOUT.sats.map(s => s.p),
-                   [C.LAYOUT.bar.c[0] - C.LAYOUT.bar.len / 2, C.LAYOUT.bar.c[1]],
-                   [C.LAYOUT.bar.c[0] + C.LAYOUT.bar.len / 2, C.LAYOUT.bar.c[1]],
-                   C.LAYOUT.TR, C.LAYOUT.BR, C.LAYOUT.BL];
-  for (const [x, y] of outside)
-    assert.ok(x < C.LAYOUT.gridX0 || x > C.LAYOUT.gridX1 || y < C.LAYOUT.gridY0, 'overlaps grid: ' + x + ',' + y);
+  let minPair = 1;
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+    const d = Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]);
+    if (d < minPair) minPair = d;
+  }
+  assert.ok(minPair > 0.035, 'min pairwise spacing too tight: ' + minPair.toFixed(4));
+  assert.ok(minPair < 0.075, 'spacing never relaxed — still lattice-like: ' + minPair.toFixed(4));
+  // determinism across module instances
+  const C2 = require('./codec.js');
+  for (let i = 0; i < C.SLOTS; i += 17)
+    assert.deepStrictEqual(C.slotPos(i), C2.slotPos(i), 'slotPos deterministic ' + i);
+  // discs, wander and dot size respect local spacing
+  for (let i = 0; i < C.SLOTS; i++) {
+    assert.ok(C.slotDiscR(i) > 0.015 && C.slotAmp(i) > 0.012, 'adaptive metrics ' + i);
+    assert.ok(C.dataR(i) <= 0.62 * (C.slotDiscR(i) / 0.42) + 1e-9, 'dot fits spacing ' + i);
+  }
 });
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');

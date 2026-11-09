@@ -203,8 +203,10 @@
       <li><b>Calibration satellites</b> — three known hues (R/G/B) at the top edge. Their measured
           drift estimates the frame's global hue rotation from auto white balance, before
           classification.</li>
-      <li><b>Slots</b> — particles wander but stay near their cell. The decoder samples each
-          cell's color histogram, so identity comes from geometry — no bits spent on ordering.</li>
+      <li><b>Slots</b> — 160 particles sit on a seeded Poisson-disc point cloud (center-dense
+          ellipse, no lattice), so identity comes from geometry — no bits spent on ordering.
+          Sampling discs, wander budget and dot size all adapt to each slot's local spacing;
+          the deterministic point set is shared by encoder and decoder by construction.</li>
       <li><b>Timing</b> — states dwell ~1.2 s: 45% swirl, then particles settle exactly onto
           their anchors. Temporal voting across frames + CRC means blurred transition frames are
           simply discarded.</li>
@@ -231,7 +233,7 @@
 </main>
 <div class="footer">ParticleCode prototype — encode light, decode with a lens.</div>
 
-<script src="codec.js"></script>
+<script src="codec.js?v=2"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -364,10 +366,9 @@ function drawScene(ctx, W, H, syms, opts) {
     const p = toPx(s.p[0], s.p[1]);
     blit(ctx, set.sats[i], p[0], p[1], A.satR * Math.min(W, H));
   });
-  const r = PC.dataR() * Math.min(W, H);
   for (let i = 0; i < PC.SLOTS; i++) {
     const pos = PC.slotPos(i), p = toPx(pos[0], pos[1]);
-    blit(ctx, set.syms[syms[i]], p[0], p[1], r);
+    blit(ctx, set.syms[syms[i]], p[0], p[1], PC.dataR(i) * Math.min(W, H));
   }
 }
 
@@ -569,16 +570,14 @@ function senderFrame(now) {
 function senderFrameInner(now) {
   const ctx = sendCanvas.ctx;
   const W = sendCanvas.width, H = sendCanvas.height;
-  const S = Math.min(W, H), pitch = ((PC.LAYOUT.gridX1 - PC.LAYOUT.gridX0) / PC.COLS) * S;
+  const S = Math.min(W, H), pitch = PC.cellPitch() * S;   // mean spacing, px
   const idle = sender.states.length === 0;
   const k = idle ? 0 : Math.max(0, Math.floor(now / STATE_MS)) % sender.states.length;
   const ph = (now % STATE_MS) / STATE_MS;
   const sway = ph < FLOAT_FRAC
     ? 1
     : 1 - theme.settle(Math.min(1, (ph - FLOAT_FRAC) / (1 - FLOAT_FRAC)));
-  const amp = idle
-    ? pitch * 0.55                                        // free-roaming idle swarm
-    : (parseInt($('intensity').value, 10) / 100) * pitch * 0.35 * sway;
+  const iScale = (parseInt($('intensity').value, 10) / 100) * sway;
   const toPx = unitToPx(W, H), set = spriteSet(0, 1);
   const t = now / 1000;
 
@@ -593,7 +592,6 @@ function senderFrameInner(now) {
     blit(ctx, set.sats[i], p[0], p[1], A.satR * S);
   });
 
-  const r = PC.dataR() * S;
   const frameSyms = idle ? null : sender.syms[k];
   const motion = idle ? THEMES.nebula.motion : theme.motion;
   for (let i = 0; i < PC.SLOTS; i++) {
@@ -602,17 +600,19 @@ function senderFrameInner(now) {
     let u = motion(jt, i, t, pos);
     const um = Math.hypot(u[0], u[1]);
     if (um > 1) u = [u[0] / um, u[1] / um];                // hard in-cell clamp
-    const dx = u[0] * amp, dy = u[1] * amp;
+    const ampI = idle ? pitch * 0.55 : PC.slotAmp(i) * S * iScale;
+    const dx = u[0] * ampI, dy = u[1] * ampI;
     const p = toPx(pos[0], pos[1]);
+    const ri = PC.dataR(i) * S;
     const tw = idle
       ? 0.55 + 0.45 * Math.sin(t * 1.6 + i * 1.31)          // idle: deep twinkle
       : theme.twinkle(ph, i, t);
     ctx.globalAlpha = tw;
     if (idle) {
-      blit(ctx, set.anchor, p[0] + dx, p[1] + dy, r * 0.5); // white motes, no grid
+      blit(ctx, set.anchor, p[0] + dx, p[1] + dy, ri * 0.5); // white motes, free swarm
     } else {
       blit(ctx, set.syms[frameSyms[i]], p[0] + dx, p[1] + dy,
-           r * (1 + 0.07 * sway * Math.sin(t * 2.2 + i)));
+           ri * (1 + 0.07 * sway * Math.sin(t * 2.2 + i)));
     }
     ctx.globalAlpha = 1;
   }
@@ -961,18 +961,16 @@ function processFrame(img) {
   }
   const off2 = Math.round(((rx.hueOffDeg / 2) + 180) % 180);
 
-  // slot sampling
-  const g0 = Hm(PC.LAYOUT.gridX0, PC.LAYOUT.gridY0), g1 = Hm(PC.LAYOUT.gridX1, PC.LAYOUT.gridY1);
-  const g2 = Hm(PC.LAYOUT.gridX0, PC.LAYOUT.gridY1);
-  const pitchPx = Math.min(Math.hypot(g1[0] - g0[0], g1[1] - g0[1]) / PC.COLS,
-                           Math.hypot(g2[0] - g0[0], g2[1] - g0[1]) / PC.ROWS);
-  const sr = Math.max(2, 0.34 * pitchPx), sr2 = sr * sr;
+  // slot sampling — discs sized to each slot's local density
+  const u0 = Hm(0, 0), u1 = Hm(1, 0);
+  const scalePx = Math.hypot(u1[0] - u0[0], u1[1] - u0[1]);    // px per unit
   const vWhite = rx.vWhite, vBg = 0.35 * vWhite;
   const cur = new Uint8Array(PC.SLOTS);
   let valid = 0;
   const cnt = new Uint32Array(9);             // 0..7 symbols, 8 = white/unknown
   for (let i = 0; i < PC.SLOTS; i++) {
     cnt.fill(0);
+    const sr = Math.max(2, PC.slotDiscR(i) * scalePx), sr2 = sr * sr;
     const pos = PC.slotPos(i), pc = Hm(pos[0], pos[1]);
     const x0 = Math.max(0, (pc[0] - sr) | 0), x1 = Math.min(W - 1, pc[0] + sr | 0);
     const y0 = Math.max(0, (pc[1] - sr) | 0), y1 = Math.min(H - 1, pc[1] + sr | 0);
