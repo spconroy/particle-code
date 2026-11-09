@@ -97,6 +97,14 @@
       <textarea id="payload" spellcheck="false">Hello from the particle cloud! This message traveled through colored light — no network, no pairing, just a camera. 🚀</textarea>
       <div class="row" style="margin-top:12px">
         <button id="btnBeam" class="act primary">Start beaming</button>
+        <label>Theme
+          <select id="themeSel">
+            <option value="nebula">🌌 Nebula</option>
+            <option value="rings">🪐 Orbit rings</option>
+            <option value="jet">✈️ Jet stream</option>
+            <option value="fire">🔥 Campfire</option>
+          </select>
+        </label>
         <label>Sway
           <input type="range" id="intensity" min="0" max="100" value="55">
         </label>
@@ -180,6 +188,10 @@
       <li><b>Dressing</b> — the drifting blue-white motes, faint nebula and motion trails are
           pure atmosphere (our nod to Apple's Quick Start cloud). The decoder never samples them:
           they're too small for the anchor filter and lose every symbol vote by ~25:1.</li>
+      <li><b>Themes</b> — nebula, orbit rings, jet stream and campfire are motion/decor skins over
+          the same codec: every theme's data dots stay inside their cell while swirling and land
+          exactly on their anchors at sample time; decor is stateless f(t), so the simulator
+          proves each skin decodes.</li>
     </ul>
     <h3>Honest numbers</h3>
     <p>~60 bytes/state × ~2–3 states/s ≈ <b>120–180 B/s</b> after overhead. An animated QR
@@ -320,7 +332,8 @@ function drawScene(ctx, W, H, syms, opts) {
   opts = opts || {};
   const toPx = unitToPx(W, H), set = spriteSet(opts.hueShift, opts.bright);
   ctx.fillStyle = '#05060a'; ctx.fillRect(0, 0, W, H);
-  drawNebula(ctx, W, H, 0.5);
+  const th = THEMES[opts.themeName] || THEMES.nebula;
+  th.decor(ctx, W, H, opts.t || 0);
   drawAmbient(ctx, W, H, opts.t || 0, 0.9);
   const A = PC.LAYOUT;
   drawAnchors(ctx, W, H, opts.hueShift);
@@ -334,6 +347,141 @@ function drawScene(ctx, W, H, syms, opts) {
     blit(ctx, set.syms[syms[i]], p[0], p[1], r);
   }
 }
+
+/* ============================== themes ==============================
+   A theme is a motion field + settle ease + twinkle + decorative layer.
+   The codec contract is invariant: data dots stay within their cell during
+   swirl (unit offsets |u| ≤ 1, scaled by amp ≤ 0.32 pitch) and land exactly on
+   their anchors at sample time. Decor is stateless (pure f(t)) so the
+   simulator exercises exactly what the camera sees. */
+const h1 = n => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); };
+const easeInOutCubic = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+const THEMES = {
+  nebula: {
+    label: 'Nebula',
+    motion: (jt, i, t) => [
+      (Math.sin(t * jt.w + jt.p[0]) + 0.5 * Math.sin(t * jt.w * 1.9 + jt.p[1])) / 1.5,
+      (Math.cos(t * jt.w * 0.9 + jt.p[2]) + 0.5 * Math.sin(t * jt.w * 1.6 + jt.p[3])) / 1.5
+    ],
+    settle: t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); },
+    twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.82 + 0.18 * Math.sin(t * 2.6 + i * 1.7) : 1,
+    decor(ctx, W, H, t) { drawNebula(ctx, W, H); }
+  },
+  rings: {
+    label: 'Orbit rings',
+    motion: (jt, i, t) => {
+      const or = 0.7 + 0.3 * h1(i * 3 + 1), a = t * jt.w * 0.8 + jt.p[0];
+      return [or * Math.cos(a), or * Math.sin(a) * 0.55];
+    },
+    settle: easeInOutCubic,
+    twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.88 + 0.12 * Math.sin(t * 1.8 + i) : 1,
+    decor(ctx, W, H, t) {
+      const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
+      const P = (u, v) => [ox + u * S, oy + v * S];
+      const g = ctx.createRadialGradient(...P(0.5, 0.52), 0, ...P(0.5, 0.52), 0.3 * S);
+      g.addColorStop(0, 'rgba(70,92,140,0.22)'); g.addColorStop(1, 'rgba(70,92,140,0)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = 'rgb(168,190,230)';
+      for (const r of [0.30, 0.38, 0.47]) {
+        const b = r * 0.32, n = 70, sp = 0.16 / r * Math.sign(r - 0.38 || 1);
+        for (let k = 0; k < n; k++) {
+          const th = 2 * Math.PI * k / n + t * sp * 10;
+          const p = P(0.5 + r * Math.cos(th), 0.52 + b * Math.sin(th));
+          ctx.globalAlpha = 0.22 + 0.16 * (0.5 + 0.5 * Math.sin(th + Math.PI / 2));
+          ctx.beginPath(); ctx.arc(p[0], p[1], 1.3, 0, 6.2832); ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+  },
+  jet: {
+    label: 'Jet stream',
+    motion: (jt, i, t, ux) => {
+      const fx = ((t * 0.20) % 1.5) - 0.25;                    // gust front sweeps L→R
+      const infl = Math.exp(-((ux - fx) * (ux - fx)) / 0.034); // ~σ 0.13 units
+      return [0.25 * Math.sin(t * jt.w + jt.p[0]) + 0.95 * infl,
+              0.3 * Math.sin(t * jt.w * 0.8 + jt.p[2]) - 0.3 * infl];
+    },
+    settle: t => 1 - Math.pow(1 - t, 4),
+    twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.85 + 0.15 * Math.sin(t * 3 + i) : 1,
+    decor(ctx, W, H, t) {
+      const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
+      const ROT = -0.25, A = 0.56, B = 0.53;
+      const path = tt => {
+        const th = tt * 0.32, ca = Math.cos(ROT), sa = Math.sin(ROT);
+        const x = A * Math.cos(th), y = B * Math.sin(th);
+        return [ox + (0.5 + x * ca - y * sa) * S, oy + (0.5 + x * sa + y * ca) * S];
+      };
+      // exhaust: stateless pseudo-particles trailing the ship
+      for (let k = 0; k < 26; k++) {
+        const age = (t * 1.1 + k / 26) % 1, tp = t - age * 0.55;
+        const [ex, ey] = path(tp);
+        const spread = (0.5 + 2.5 * age);
+        const px = ex + (h1(k * 7 + 3) - 0.5) * 9 * spread;
+        const py = ey + (h1(k * 13 + 5) - 0.5) * 9 * spread;
+        const warm = age < 0.35;
+        ctx.globalAlpha = (1 - age) * (warm ? 0.55 : 0.3);
+        ctx.fillStyle = warm ? 'rgb(255,200,110)' : 'rgb(150,152,166)';
+        ctx.beginPath(); ctx.arc(px, py, 1 + 2.6 * age, 0, 6.2832); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      // ship: small white dart flying nose-first
+      const [jx, jy] = path(t), [nx, ny] = path(t + 0.01);
+      const ang = Math.atan2(ny - jy, nx - jx);
+      ctx.save(); ctx.translate(jx, jy); ctx.rotate(ang);
+      ctx.fillStyle = 'rgba(235,244,255,0.95)';
+      ctx.beginPath(); ctx.moveTo(7, 0); ctx.lineTo(-6, 3.6); ctx.lineTo(-3.4, 0); ctx.lineTo(-6, -3.6); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+  },
+  fire: {
+    label: 'Campfire',
+    motion: (jt, i, t) => [
+      0.3 * Math.sin(t * jt.w + jt.p[0]),
+      -(0.35 + 0.3 * Math.sin(t * 0.8 * jt.w + jt.p[2]))        // embers rise
+    ],
+    settle: t => 1 - Math.pow(1 - t, 3),
+    twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.6 + 0.4 * Math.sin(t * 5 + i * 2.3) : 1,
+    decor(ctx, W, H, t) {
+      const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
+      const P = (u, v) => [ox + u * S, oy + v * S];
+      // logs: dark, below the classifier's value floor
+      ctx.fillStyle = '#2a1c12';
+      for (const rot of [0.3, -0.35]) {
+        const c = P(0.5, 0.962);
+        ctx.save(); ctx.translate(c[0], c[1]); ctx.rotate(rot);
+        ctx.beginPath(); ctx.roundRect(-0.065 * S, -0.005 * S, 0.13 * S, 0.01 * S, 0.004 * S); ctx.fill();
+        ctx.restore();
+      }
+      // flames: rise from the base, warm → red, tapering
+      for (let i = 0; i < 26; i++) {
+        const age = (t * 0.85 + i / 26) % 1;
+        const u = 0.5 + Math.sin(t * 3.1 + i * 2.63) * 0.022 * (0.35 + age * 0.8) + (h1(i * 7) - 0.5) * 0.015;
+        const v = 0.965 - age * 0.075;
+        const p = P(u, v);
+        ctx.globalAlpha = (1 - age) * (0.5 + 0.2 * Math.sin(t * 9 + i * 5));
+        ctx.fillStyle = age < 0.3 ? 'rgb(255,196,96)' : age < 0.65 ? 'rgb(255,120,52)' : 'rgb(190,64,44)';
+        ctx.beginPath(); ctx.arc(p[0], p[1], 2.6 * (1 - age) + 0.7, 0, 6.2832); ctx.fill();
+      }
+      // sparks: bright, brief, small
+      ctx.fillStyle = 'rgb(255,214,130)';
+      for (let i = 0; i < 7; i++) {
+        const age = (t * 0.5 + i / 7) % 1;
+        const p = P(0.5 + Math.sin(t * 5 + i * 9.1) * 0.05, 0.955 - age * 0.16);
+        ctx.globalAlpha = (1 - age) * 0.75;
+        ctx.beginPath(); ctx.arc(p[0], p[1], 1.2, 0, 6.2832); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+};
+let themeName = 'nebula';
+try {
+  const saved = localStorage.getItem('pcTheme');
+  if (saved && THEMES[saved]) themeName = saved;
+} catch (e) { /* private mode */ }
+let theme = THEMES[themeName];
 
 /* ============================== sender ============================== */
 const sender = {
@@ -366,15 +514,16 @@ function senderFrame(now) {
   const ph = (now % STATE_MS) / STATE_MS;
   const sway = ph < FLOAT_FRAC
     ? 1
-    : 1 - easeOutBack(Math.min(1, (ph - FLOAT_FRAC) / (1 - FLOAT_FRAC)));
+    : 1 - theme.settle(Math.min(1, (ph - FLOAT_FRAC) / (1 - FLOAT_FRAC)));
   const amp = idle
     ? pitch * 0.55                                        // free-roaming idle swarm
     : (parseInt($('intensity').value, 10) / 100) * pitch * 0.30 * sway;
   const toPx = unitToPx(W, H), set = spriteSet(0, 1);
+  const t = now / 1000;
 
   ctx.fillStyle = 'rgba(5,6,10,0.30)'; ctx.fillRect(0, 0, W, H);   // trails
-  drawNebula(ctx, W, H);                                            // faint backdrop
-  drawAmbient(ctx, W, H, now / 1000);                               // drifting motes
+  theme.decor(ctx, W, H, t);                                        // theme layer
+  drawAmbient(ctx, W, H, t);                                        // starfield motes
 
   const A = PC.LAYOUT;
   if (!idle) drawAnchors(ctx, W, H, 0);   // structural, always static and solid
@@ -385,14 +534,18 @@ function senderFrame(now) {
 
   const r = PC.dataR() * S;
   const frameSyms = idle ? null : sender.syms[k];
+  const motion = idle ? THEMES.nebula.motion : theme.motion;
   for (let i = 0; i < PC.SLOTS; i++) {
-    const jt = sender.jitter[i], t = now / 1000;
-    const dx = amp * (Math.sin(t * jt.w + jt.p[0]) + 0.5 * Math.sin(t * jt.w * 1.9 + jt.p[1]));
-    const dy = amp * (Math.cos(t * jt.w * 0.9 + jt.p[2]) + 0.5 * Math.sin(t * jt.w * 1.6 + jt.p[3]));
-    const pos = PC.slotPos(i), p = toPx(pos[0], pos[1]);
+    const jt = sender.jitter[i];
+    const pos = PC.slotPos(i);
+    let u = motion(jt, i, t, pos[0]);
+    const um = Math.hypot(u[0], u[1]);
+    if (um > 1) u = [u[0] / um, u[1] / um];                // hard in-cell clamp
+    const dx = u[0] * amp, dy = u[1] * amp;
+    const p = toPx(pos[0], pos[1]);
     const tw = idle
       ? 0.55 + 0.45 * Math.sin(t * 1.6 + i * 1.31)          // idle: deep twinkle
-      : (ph < FLOAT_FRAC ? 0.82 + 0.18 * Math.sin(t * 2.6 + i * 1.7) : 1);
+      : theme.twinkle(ph, i, t);
     ctx.globalAlpha = tw;
     if (idle) {
       blit(ctx, set.anchor, p[0] + dx, p[1] + dy, r * 0.5); // white motes, no grid
@@ -405,7 +558,7 @@ function senderFrame(now) {
 
   $('sendHud').innerHTML = idle
     ? 'idle — type something to encode it into the cloud'
-    : `block <b>${k + 1}/${sender.states.length}</b>` +
+    : `${theme.label.toLowerCase()} · block <b>${k + 1}/${sender.states.length}</b>` +
       ` · <b>60 B</b>/state · msg #${sender.session}` +
       ` · ${ph < FLOAT_FRAC ? 'swirl' : '<b>settled</b>'}`;
   sender.raf = requestAnimationFrame(t2 => senderFrame(t2 - sender.t0));
@@ -456,6 +609,14 @@ function stopBeaming() {
   log('beaming paused');
 }
 $('btnBeam').addEventListener('click', () => sender.running ? stopBeaming() : startBeaming());
+
+$('themeSel').value = themeName;
+$('themeSel').addEventListener('change', () => {
+  themeName = $('themeSel').value;
+  theme = THEMES[themeName];
+  try { localStorage.setItem('pcTheme', themeName); } catch (e) { }
+  log('theme: ' + theme.label.toLowerCase());
+});
 
 function sizeSendCanvas() {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
