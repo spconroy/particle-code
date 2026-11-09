@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ParticleCode — a color-particle data channel (prototype)</title>
+<style>
+  :root{
+    --bg:#05060a; --panel:#0b0d14; --panel2:#10131d; --line:#1d2230;
+    --fg:#e8eaf2; --dim:#8b93a7; --accent:#6ee7ff; --ok:#34d399;
+    --warn:#fbbf24; --err:#f87171; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  main,header{max-width:1060px;margin:0 auto;padding:0 16px}
+  header{padding-top:28px}
+  h1{font-size:24px;margin:0;letter-spacing:.2px}
+  h1 small{color:var(--dim);font-weight:400;font-size:14px;margin-left:8px}
+  .tagline{color:var(--dim);margin:6px 0 18px;font-size:14px}
+  nav{display:flex;gap:8px;margin:4px 0 16px;flex-wrap:wrap}
+  nav button{background:var(--panel);border:1px solid var(--line);color:var(--dim);
+    padding:8px 16px;border-radius:999px;cursor:pointer;font-size:14px}
+  nav button.active{color:var(--fg);border-color:#3b4358;background:var(--panel2)}
+  section.panel{display:none;gap:16px;grid-template-columns:minmax(0,1fr)}
+  section.panel.show{display:grid}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  label{font-size:13px;color:var(--dim)}
+  textarea,input[type=text]{width:100%;background:var(--panel2);border:1px solid var(--line);
+    color:var(--fg);border-radius:8px;padding:10px 12px;font:inherit}
+  textarea{min-height:64px;resize:vertical;font-family:var(--mono);font-size:13px}
+  select,input[type=range]{accent-color:var(--accent)}
+  select{background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+    border-radius:8px;padding:6px 10px;font:inherit}
+  button.act{background:var(--panel2);border:1px solid #3b4358;color:var(--fg);
+    padding:10px 18px;border-radius:8px;cursor:pointer;font-size:14px}
+  button.act:hover{border-color:var(--accent)}
+  button.act.primary{background:var(--accent);border-color:var(--accent);color:#03222b;font-weight:600}
+  button.act:disabled{opacity:.45;cursor:default}
+  .hint{font-size:12.5px;color:var(--dim)}
+  .stage{position:relative;background:#000;border-radius:12px;overflow:hidden;
+    width:min(100%,76vh);aspect-ratio:1/1;margin:0 auto;border:1px solid var(--line)}
+  .stage canvas{position:absolute;inset:0;width:100%;height:100%}
+  .hud{display:flex;gap:14px;justify-content:center;color:var(--dim);font-size:13px;
+    font-family:var(--mono);margin-top:10px;flex-wrap:wrap;min-height:20px}
+  .hud b{color:var(--accent);font-weight:500}
+  #videoWrap{position:relative;background:#000;border-radius:12px;overflow:hidden;
+    border:1px solid var(--line);max-width:720px;margin:0 auto}
+  #videoWrap video{display:block;width:100%}
+  #videoWrap canvas{position:absolute;inset:0;width:100%;height:100%}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+  .chip{font-family:var(--mono);font-size:12px;padding:3px 10px;border-radius:999px;
+    border:1px solid var(--line);color:var(--dim)}
+  .chip.got{border-color:var(--ok);color:var(--ok)}
+  .chip.cur{border-color:var(--accent);color:var(--accent)}
+  #result{font-family:var(--mono);font-size:13px;background:var(--panel2);
+    border:1px solid var(--ok);border-radius:8px;padding:10px 12px;white-space:pre-wrap;
+    word-break:break-word;display:none}
+  #log{font-family:var(--mono);font-size:12px;color:var(--dim);background:#07080d;
+    border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+    max-height:220px;overflow:auto;white-space:pre-wrap}
+  #log .ok{color:var(--ok)} #log .err{color:var(--err)} #log .hi{color:var(--accent)}
+  .metrics{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:12.5px;
+    color:var(--dim);margin:8px 0}
+  .metrics b{color:var(--fg);font-weight:500}
+  .status{font-family:var(--mono);font-size:13px;margin:10px 0}
+  .status.search{color:var(--warn)} .status.lock{color:var(--ok)}
+  h3{font-size:15px;margin:18px 0 8px;color:var(--fg)}
+  .how p{color:var(--dim);font-size:14px;margin:8px 0}
+  .how code{color:var(--accent);font-family:var(--mono);font-size:13px}
+  .how li{color:var(--dim);font-size:14px;margin:4px 0}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:760px){.cols{grid-template-columns:1fr}}
+  .footer{color:#525a6e;font-size:12.5px;text-align:center;padding:30px 16px 40px}
+</style>
+</head>
+<body>
+<header>
+  <h1>ParticleCode <small>prototype v0</small></h1>
+  <p class="tagline">An open, color-particle screen-to-camera data channel — inspired by Apple's
+    Quick Start particle cloud, built on plain web tech. Data is encoded in the
+    <em>colors</em> of a swirling particle constellation; any phone camera can decode it.</p>
+</header>
+<main>
+<nav>
+  <button id="tab-send" class="active">Send</button>
+  <button id="tab-recv">Receive</button>
+  <button id="tab-how">How it works</button>
+</nav>
+
+<!-- ============================ SEND ============================ -->
+<section id="panel-send" class="panel show">
+  <div class="cols">
+    <div class="card">
+      <label for="payload">Payload (UTF-8)</label>
+      <textarea id="payload" spellcheck="false">Hello from the particle cloud! This message traveled through colored light — no network, no pairing, just a camera. 🚀</textarea>
+      <div class="row" style="margin-top:12px">
+        <button id="btnBeam" class="act primary">Start beaming</button>
+        <label>Sway
+          <input type="range" id="intensity" min="0" max="100" value="55">
+        </label>
+        <span class="hint" id="cap"></span>
+      </div>
+      <div class="hint" style="margin-top:10px">
+        <b>Live:</b> type here and the cloud re-encodes as you type. Hold a second device on the
+        <b>Receive</b> tab about 20–40&nbsp;cm from this screen.
+        160 particles × 3 bits = 60 bytes per state, cycled with Reed–Solomon protection.
+      </div>
+    </div>
+    <div>
+      <div class="stage"><canvas id="sendCanvas"></canvas></div>
+      <div class="hud" id="sendHud"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ RECEIVE ============================ -->
+<section id="panel-recv" class="panel">
+  <div class="card" style="margin-bottom:16px">
+    <div class="row">
+      <button id="btnCam" class="act primary">Start camera</button>
+      <button id="btnReset" class="act">Reset decoder</button>
+      <button id="btnSim" class="act">Run simulated end-to-end test</button>
+    </div>
+    <div class="hint" style="margin-top:10px" id="camHint">
+      Needs a rear camera — requires HTTPS or localhost. Serve this folder
+      (<code>python3 -m http.server</code>) and open on the phone. Bright screen, steady hands,
+      avoid glare. The decoder locks onto the 4 white anchors first, then samples the grid.
+    </div>
+  </div>
+  <div class="cols">
+    <div>
+      <div id="videoWrap" hidden>
+        <video id="video" playsinline muted autoplay></video>
+        <canvas id="overlay"></canvas>
+      </div>
+      <div class="status search" id="rxStatus">camera off</div>
+      <div class="metrics" id="rxMetrics"></div>
+      <div class="chips" id="chips"></div>
+      <div id="result"></div>
+      <div class="row" style="margin-top:8px">
+        <button id="btnCopy" class="act" hidden>Copy decoded text</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Decoder log</h3>
+      <div id="log">boot…</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ HOW ============================ -->
+<section id="panel-how" class="panel how">
+  <div class="card">
+    <h3 style="margin-top:0">The channel</h3>
+    <p>Payload → UTF-8 → 43-byte blocks → <code>[id][total][session][len][data][CRC-16]</code>
+       (49 bytes) → Reed–Solomon(60,49) over GF(256) → 480 bits → <b>160 three-bit symbols</b>
+       → the color of 160 particles. Blocks cycle continuously; the receiver latches any block
+       that decodes cleanly, in any order, at any time. The <code>session</code> byte bumps on
+       every edit, so live typing on the sender cleanly replaces what the receiver holds.</p>
+    <h3>Why 8 colors and not 24-bit RGB</h3>
+    <p>A camera channel mangles colors: auto white balance, exposure, gamma, chroma-subsampled
+       video. Two decades of color-barcode research (Microsoft's HCCB, COBRA, PixNet…) converged
+       on the same answer — a small, maximally separated palette plus heavy error correction.
+       Six hues on a 60°-spaced wheel (<code>0 60 120 180 240 300</code>) plus two grays give
+       3 bits/particle that survive the trip.</p>
+    <h3>Structure</h3>
+    <ul>
+      <li><b>Anchors</b> — four large white dots in the corners. A close pair top-left
+          disambiguates orientation; the quad drives a homography that rectifies perspective.</li>
+      <li><b>Calibration satellites</b> — three known hues (R/G/B) at the top edge. Their measured
+          drift estimates the frame's global hue rotation from auto white balance, before
+          classification.</li>
+      <li><b>Slots</b> — particles wander but stay near their cell. The decoder samples each
+          cell's color histogram, so identity comes from geometry — no bits spent on ordering.</li>
+      <li><b>Timing</b> — states dwell ~1.2 s: 45% swirl, then particles settle exactly onto
+          their anchors. Temporal voting across frames + CRC means blurred transition frames are
+          simply discarded.</li>
+    </ul>
+    <h3>Honest numbers</h3>
+    <p>~60 bytes/state × ~2–3 states/s ≈ <b>120–180 B/s</b> after overhead. An animated QR
+       (txqr-style) moves ~50× more data — this trades bandwidth for a format humans enjoy
+       pointing cameras at.</p>
+    <h3>v1 ideas</h3>
+    <ul>
+      <li>Luby-transform fountain coding instead of cyclic repetition.</li>
+      <li>Per-cell adaptive thresholds; exposure lock via <code>applyConstraints</code>.</li>
+      <li>16-color palette with per-frame calibration for 4 bits/particle.</li>
+    </ul>
+  </div>
+</section>
+</main>
+<div class="footer">ParticleCode prototype — encode light, decode with a lens.</div>
+
+<script src="codec.js"></script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const logEl = $('log');
+function log(msg, cls) {
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = new Date().toTimeString().slice(0, 8) + '  ' + msg;
+  logEl.appendChild(line);
+  while (logEl.childNodes.length > 300) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+/* ============================== shared rendering ============================== */
+const SYM_RGB = PC.SYMS.map(s => s.hue !== undefined ? PC.hsvToRgb(s.hue, 1, 0.88)
+                                                    : [Math.round(255 * s.gray), Math.round(255 * s.gray), Math.round(255 * s.gray)]);
+const ANCHOR_RGB = [255, 255, 255];
+
+function makeSprite(rgb, bright) {          // glow contained within the cell: halo dies by 1.25x core
+  const c = document.createElement('canvas');
+  c.width = c.height = 96;
+  const g = c.getContext('2d');
+  const [r, gg, b] = rgb.map(v => Math.min(255, Math.round(v * (bright || 1))));
+  const col = a => `rgba(${r},${gg},${b},${a})`;
+  const grad = g.createRadialGradient(48, 48, 0, 48, 48, 48);
+  grad.addColorStop(0, col(1)); grad.addColorStop(0.76, col(0.95));
+  grad.addColorStop(0.92, col(0.30)); grad.addColorStop(1, col(0));
+  g.fillStyle = grad; g.fillRect(0, 0, 96, 96);
+  return c;
+}
+function spriteSet(hueShiftDeg, bright) {   // cached palette of sprites
+  const key = Math.round((hueShiftDeg || 0)) + '|' + ((bright || 1).toFixed(2));
+  spriteSet.cache = spriteSet.cache || {};
+  if (spriteSet.cache[key]) return spriteSet.cache[key];
+  const set = {
+    syms: PC.SYMS.map((s, i) => s.hue !== undefined
+      ? makeSprite(PC.hsvToRgb((s.hue + (hueShiftDeg || 0) + 360) % 360, 1, 0.88), bright)
+      : makeSprite(SYM_RGB[i], bright)),
+    anchor: makeSprite(ANCHOR_RGB, bright),
+    sats: PC.LAYOUT.sats.map(s => makeSprite(PC.hsvToRgb((s.hue + (hueShiftDeg || 0) + 360) % 360, 1, 0.88), bright))
+  };
+  spriteSet.cache[key] = set;
+  return set;
+}
+const CORE = 0.80;                          // solid-core fraction of sprite half-size
+function blit(ctx, sprite, x, y, r) {
+  const d = (r / CORE) * 2;
+  ctx.drawImage(sprite, x - d / 2, y - d / 2, d, d);
+}
+function unitToPx(W, H) {
+  const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
+  return (u, v) => [ox + u * S, oy + v * S];
+}
+/* Solid white anchors: capsule bar (TL) + three circles. Solid, not glow —
+   the mask needs crisp geometry, like a QR finder pattern. */
+function drawAnchors(ctx, W, H, hueShift) {
+  const A = PC.LAYOUT, S = Math.min(W, H), toPx = unitToPx(W, H);
+  ctx.fillStyle = '#ffffff';
+  const b = A.bar, bc = toPx(b.c[0], b.c[1]);
+  const len = b.len * S, th = b.th * S, r = th / 2;
+  ctx.beginPath();
+  ctx.moveTo(bc[0] - len / 2 + r, bc[1] - r);
+  ctx.lineTo(bc[0] + len / 2 - r, bc[1] - r);
+  ctx.arc(bc[0] + len / 2 - r, bc[1], r, -Math.PI / 2, Math.PI / 2);
+  ctx.lineTo(bc[0] - len / 2 + r, bc[1] + r);
+  ctx.arc(bc[0] - len / 2 + r, bc[1], r, Math.PI / 2, Math.PI * 1.5);
+  ctx.closePath(); ctx.fill();
+  for (const k of ['TR', 'BR', 'BL']) {
+    const p = toPx(A[k][0], A[k][1]);
+    ctx.beginPath();
+    ctx.arc(p[0], p[1], A.anchorR * S, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+/* Draw one settled frame (used by simulator + encoder first paint). */
+function drawScene(ctx, W, H, syms, opts) {
+  opts = opts || {};
+  const toPx = unitToPx(W, H), set = spriteSet(opts.hueShift, opts.bright);
+  ctx.fillStyle = '#05060a'; ctx.fillRect(0, 0, W, H);
+  const A = PC.LAYOUT;
+  drawAnchors(ctx, W, H, opts.hueShift);
+  A.sats.forEach((s, i) => {
+    const p = toPx(s.p[0], s.p[1]);
+    blit(ctx, set.sats[i], p[0], p[1], A.satR * Math.min(W, H));
+  });
+  const r = PC.dataR() * Math.min(W, H);
+  for (let i = 0; i < PC.SLOTS; i++) {
+    const pos = PC.slotPos(i), p = toPx(pos[0], pos[1]);
+    blit(ctx, set.syms[syms[i]], p[0], p[1], r);
+  }
+}
+
+/* ============================== sender ============================== */
+const sender = {
+  running: false, raf: 0, states: [], syms: [], jitter: null, t0: 0,
+  session: 0, lastText: null, idleSyms: null
+};
+const sendCanvas = $('sendCanvas');
+const STATE_MS = 1200, FLOAT_FRAC = 0.45;
+
+function makeJitter(n) {                    // per-dot sinusoid params for the swirl
+  const j = [];
+  for (let i = 0; i < n; i++) j.push({
+    w: 0.9 + Math.random() * 1.4, p: [Math.random() * 6.28, Math.random() * 6.28,
+                                      Math.random() * 6.28, Math.random() * 6.28]
+  });
+  return j;
+}
+const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+function senderFrame(now) {
+  const ctx = sendCanvas.ctx;
+  const W = sendCanvas.width, H = sendCanvas.height;
+  const S = Math.min(W, H), pitch = ((PC.LAYOUT.gridX1 - PC.LAYOUT.gridX0) / PC.COLS) * S;
+  const idle = sender.states.length === 0;
+  const k = idle ? 0 : Math.floor(now / STATE_MS) % sender.states.length;
+  const ph = (now % STATE_MS) / STATE_MS;
+  const sway = ph < FLOAT_FRAC ? 1 : 1 - ease((ph - FLOAT_FRAC) / (1 - FLOAT_FRAC));
+  const amp = (parseInt($('intensity').value, 10) / 100) * pitch * 0.30 * sway;
+  const toPx = unitToPx(W, H), set = spriteSet(0, 1);
+
+  ctx.fillStyle = 'rgba(5,6,10,0.30)'; ctx.fillRect(0, 0, W, H);   // trails
+
+  const A = PC.LAYOUT;
+  drawAnchors(ctx, W, H, 0);   // structural, always static and solid
+  A.sats.forEach((s, i) => {
+    const p = toPx(s.p[0] + 0.004 * sway * Math.sin(now / 500 + i), s.p[1]);
+    blit(ctx, set.sats[i], p[0], p[1], A.satR * S);
+  });
+
+  const r = PC.dataR() * S;
+  const frameSyms = idle ? sender.idleSyms : sender.syms[k];
+  for (let i = 0; i < PC.SLOTS; i++) {
+    const jt = sender.jitter[i], t = now / 1000;
+    const dx = amp * (Math.sin(t * jt.w + jt.p[0]) + 0.5 * Math.sin(t * jt.w * 1.9 + jt.p[1]));
+    const dy = amp * (Math.cos(t * jt.w * 0.9 + jt.p[2]) + 0.5 * Math.sin(t * jt.w * 1.6 + jt.p[3]));
+    const pos = PC.slotPos(i), p = toPx(pos[0], pos[1]);
+    blit(ctx, set.syms[frameSyms[i]], p[0] + dx, p[1] + dy,
+         r * (1 + 0.07 * sway * Math.sin(t * 2.2 + i)));
+  }
+
+  $('sendHud').innerHTML = idle
+    ? 'idle — type something to encode it into the cloud'
+    : `block <b>${k + 1}/${sender.states.length}</b>` +
+      ` · <b>60 B</b>/state · msg #${sender.session}` +
+      ` · ${ph < FLOAT_FRAC ? 'swirl' : '<b>settled</b>'}`;
+  sender.raf = requestAnimationFrame(t2 => senderFrame(t2 - sender.t0));
+}
+
+/* Re-encode live as the user types (debounced). Empty input = idle cloud. */
+let typeTimer = null;
+function reEncode() {
+  const text = $('payload').value;
+  if (text === sender.lastText) return;
+  sender.lastText = text;
+  if (!text) {
+    sender.states = []; sender.syms = [];
+    sender.idleSyms = sender.idleSyms || Uint8Array.from(
+      { length: PC.SLOTS }, () => (Math.random() * 8) | 0);
+    $('cap').textContent = '';
+    log('payload empty — idle cloud');
+    return;
+  }
+  sender.session = (sender.session + 1) & 0xff;
+  sender.states = PC.encodeMessage(text, sender.session);
+  sender.syms = sender.states.map(st => PC.stateToSymbols(st));
+  sender.jitter = sender.jitter || makeJitter(PC.SLOTS);
+  const est = Math.ceil(sender.states.length * STATE_MS * 2.5 / 1000);
+  $('cap').textContent = `${text.length} chars → ${sender.states.length} block(s) · ~${est}s per full pass`;
+}
+$('payload').addEventListener('input', () => {
+  clearTimeout(typeTimer);
+  typeTimer = setTimeout(reEncode, 250);
+});
+
+function startBeaming() {
+  reEncode();
+  sender.t0 = performance.now();
+  if (!sender.running) {
+    sender.running = true;
+    sender.raf = requestAnimationFrame(t => senderFrame(t - sender.t0));
+    $('btnBeam').textContent = 'Pause';
+    log('beaming — live: type in the payload box and the cloud re-encodes', 'hi');
+  }
+}
+function stopBeaming() {
+  sender.running = false;
+  cancelAnimationFrame(sender.raf);
+  const ctx = sendCanvas.ctx;
+  ctx.fillStyle = '#05060a'; ctx.fillRect(0, 0, sendCanvas.width, sendCanvas.height);
+  $('btnBeam').textContent = 'Resume';
+  $('sendHud').textContent = '';
+  log('beaming paused');
+}
+$('btnBeam').addEventListener('click', () => sender.running ? stopBeaming() : startBeaming());
+
+function sizeSendCanvas() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const rect = sendCanvas.getBoundingClientRect();
+  sendCanvas.width = Math.round(rect.width * dpr);
+  sendCanvas.height = Math.round(rect.height * dpr);
+  sendCanvas.ctx = sendCanvas.getContext('2d');
+}
+sizeSendCanvas();
+sendCanvas.ctx.fillStyle = '#05060a';
+sendCanvas.ctx.fillRect(0, 0, sendCanvas.width, sendCanvas.height);
+startBeaming();   // beam by default so the page opens alive
+
+/* ============================== receiver ============================== */
+const rx = {
+  running: false, stream: null, work: document.createElement('canvas'),
+  Hue: null, Sat: null, Val: null,
+  hist: new Float32Array(PC.SLOTS * 8), frames: 0, lockedGeom: false,
+  latched: new Map(), total: -1, session: -1, doneText: null, hueOffDeg: 0, vWhite: 220,
+  lastStatus: null, agree: 0, validFrac: 0, fpsT: performance.now(), fpsN: 0, fps: 0
+};
+const WORK_W = 480;
+const overlay = $('overlay'), video = $('video');
+const octx = overlay.getContext('2d');
+
+function rxReset() {
+  rx.hist.fill(0); rx.frames = 0; rx.lockedGeom = false; rx.latched.clear();
+  rx.total = -1; rx.session = -1; rx.doneText = null; rx.agree = 0;
+  $('chips').innerHTML = ''; $('result').style.display = 'none'; $('btnCopy').hidden = true;
+  log('decoder reset');
+}
+$('btnReset').addEventListener('click', rxReset);
+
+/* --- HSV pass + classification buffers --- */
+function classifyFrame(img) {
+  const { data, width: W, height: H } = img, N = W * H;
+  if (!rx.Hue || rx.Hue.length !== N) { rx.Hue = new Uint8Array(N); rx.Sat = new Uint8Array(N); rx.Val = new Uint8Array(N); }
+  const Hue = rx.Hue, Sat = rx.Sat, Val = rx.Val;
+  let maxV = 0;
+  for (let i = 0, p = 0; i < N; i++, p += 4) {
+    const r = data[p], g = data[p + 1], b = data[p + 2];
+    const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    const v = mx, s = mx === 0 ? 0 : ((mx - mn) * 255 / mx) | 0;
+    Val[i] = v; Sat[i] = s;
+    if (v > maxV) maxV = v;
+    if (s < 32 || mx === mn) { Hue[i] = 0; continue; }
+    let h;
+    const d = mx - mn;
+    if (mx === r) { h = 60 * (g - b) / d; if (h < 0) h += 360; }
+    else if (mx === g) h = 120 + 60 * (b - r) / d;
+    else h = 240 + 60 * (r - g) / d;
+    Hue[i] = Math.round(h / 2) & 0xff;             // degrees/2, 0..179
+  }
+  return maxV;
+}
+
+/* --- white anchor blobs on a 2× downsample grid ---
+   TL is a solid capsule bar (~2.8x a single anchor's area); TR/BR/BL are solid
+   circles. Area ratio is rotation-invariant, so: biggest blob in [1.7, 5]x the
+   median of the next-largest = the bar = TL; the three blobs nearest the median
+   anchor size are the corner singles. */
+function findAnchors(W, H, maxV) {
+  const Sat = rx.Sat, Val = rx.Val;
+  const gw = W >> 1, gh = H >> 1;
+  const mask = new Uint8Array(gw * gh);
+  const vThr = Math.max(150, 0.66 * maxV);
+  for (let cy = 0; cy < gh; cy++) for (let cx = 0; cx < gw; cx++) {
+    const x = cx * 2, y = cy * 2;
+    for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
+      const i = (y + dy) * W + x + dx;
+      if (Val[i] > vThr && Sat[i] < 80) { mask[cy * gw + cx] = 1; dy = dx = 2; }
+    }
+  }
+  const comps = [], seen = new Uint8Array(gw * gh), stack = [];
+  for (let c = 0; c < gw * gh; c++) {
+    if (!mask[c] || seen[c]) continue;
+    stack.length = 0; stack.push(c); seen[c] = 1;
+    let area = 0, sx = 0, sy = 0;
+    while (stack.length) {
+      const q = stack.pop(), qx = q % gw, qy = (q / gw) | 0;
+      area++; sx += qx; sy += qy;
+      const nb = [q - 1, q + 1, q - gw, q + gw];
+      for (const n of nb) {
+        if (n < 0 || n >= gw * gh || seen[n] || !mask[n]) continue;
+        if ((n === q - 1 && qx === 0) || (n === q + 1 && qx === gw - 1)) continue;
+        seen[n] = 1; stack.push(n);
+      }
+    }
+    if (area >= 8) comps.push({ area, cx: (sx / area) * 2 + 1, cy: (sy / area) * 2 + 1 });
+  }
+  comps.sort((a, b) => b.area - a.area);
+  const cand = comps.slice(0, 8);
+  if (cand.length < 4) return null;
+  const restAreas = cand.slice(1, 7).map(c => c.area).sort((a, b) => a - b);
+  const med = restAreas.length ? restAreas[restAreas.length >> 1] : 0;
+  if (med < 8) return null;
+  const bar = cand[0];
+  if (!(bar.area >= 1.7 * med && bar.area <= 5 * med)) return null;  // bar or glare-guard
+  const singles = cand.slice(1)
+    .filter(c => c.area >= 0.5 * med && c.area <= 1.6 * med).slice(0, 3);
+  if (singles.length < 3) return null;
+  const TL = [bar.cx, bar.cy];
+  // BR = farthest single from TL; cross product splits TR/BL
+  singles.sort((a, b) =>
+    Math.hypot(b.cx - TL[0], b.cy - TL[1]) - Math.hypot(a.cx - TL[0], a.cy - TL[1]));
+  const BR = singles[0], rest = [singles[1], singles[2]];
+  const crx = BR.cx - TL[0], cry = BR.cy - TL[1];
+  const TR = rest.find(s => crx * (s.cy - TL[1]) - cry * (s.cx - TL[0]) < 0) || rest[0];
+  const BL = rest.find(s => s !== TR) || rest[1];
+  return { TL, TR: [TR.cx, TR.cy], BR: [BR.cx, BR.cy], BL: [BL.cx, BL.cy] };
+}
+
+/* --- receiver main pipeline on one frame --- */
+function processFrame(img) {
+  const W = img.width, H = img.height;
+  const maxV = classifyFrame(img);
+  const anchors = findAnchors(W, H, maxV);
+  rx.lockedGeom = !!anchors;
+  rx.anchors = anchors;
+  if (!anchors) { rx.lastStatus = 'searching: no anchors'; return; }
+
+  const unit = [PC.LAYOUT.TL, PC.LAYOUT.TR, PC.LAYOUT.BR, PC.LAYOUT.BL];
+  const dst = [anchors.TL, anchors.TR, anchors.BR, anchors.BL];
+  const Hm = PC.solveHomography(unit, dst);
+  if (!Hm) { rx.lastStatus = 'searching: bad geometry'; return; }
+
+  // vWhite from a disc at the TR anchor (solid white reference)
+  {
+    const pr = PC.LAYOUT.anchorR * Math.min(W, H) * 0.8;
+    const p = Hm(PC.LAYOUT.TR[0], PC.LAYOUT.TR[1]);
+    let sum = 0, n = 0;
+    for (let y = Math.max(0, p[1] - pr | 0); y < Math.min(H, p[1] + pr); y++)
+      for (let x = Math.max(0, p[0] - pr | 0); x < Math.min(W, p[0] + pr); x++) {
+        const i = y * W + x;
+        if (rx.Val[i] > 165 && rx.Sat[i] < 70) { sum += rx.Val[i]; n++; }
+      }
+    if (n > 30) rx.vWhite = rx.vWhite * 0.7 + (sum / n) * 0.3;
+  }
+
+  // satellite hue offset (deg/2 space, stored 0..179)
+  {
+    let sx = 0, sy = 0, found = 0;
+    PC.LAYOUT.sats.forEach((s, idx) => {
+      const p = Hm(s.p[0], s.p[1]);
+      const rr = PC.LAYOUT.satR * Math.min(W, H) * 1.7;
+      let hx = 0, hy = 0, m = 0;
+      for (let y = Math.max(0, p[1] - rr | 0); y < Math.min(H, p[1] + rr); y++)
+        for (let x = Math.max(0, p[0] - rr | 0); x < Math.min(W, p[0] + rr); x++) {
+          const i = y * W + x;
+          if (rx.Sat[i] > 110 && rx.Val[i] > 50) {
+            const ang = rx.Hue[i] * 2 * Math.PI / 180;
+            hx += Math.cos(ang); hy += Math.sin(ang); m++;
+          }
+        }
+      if (m > 20) {
+        const expD2 = s.hue / 2;                     // expected hue in deg/2
+        const meas = Math.atan2(hy, hx) * 180 / Math.PI / 2;  // −90..90
+        let dd = meas - expD2;
+        if (dd > 90) dd -= 180; if (dd < -90) dd += 180;
+        const a2 = dd * Math.PI / 180;
+        sx += Math.cos(a2); sy += Math.sin(a2); found++;
+      }
+    });
+    if (found >= 2) rx.hueOffDeg = Math.atan2(sy, sx) * 180 / Math.PI * 2; // back to degrees
+  }
+  const off2 = Math.round(((rx.hueOffDeg / 2) + 180) % 180);
+
+  // slot sampling
+  const g0 = Hm(PC.LAYOUT.gridX0, PC.LAYOUT.gridY0), g1 = Hm(PC.LAYOUT.gridX1, PC.LAYOUT.gridY1);
+  const g2 = Hm(PC.LAYOUT.gridX0, PC.LAYOUT.gridY1);
+  const pitchPx = Math.min(Math.hypot(g1[0] - g0[0], g1[1] - g0[1]) / PC.COLS,
+                           Math.hypot(g2[0] - g0[0], g2[1] - g0[1]) / PC.ROWS);
+  const sr = Math.max(2, 0.34 * pitchPx), sr2 = sr * sr;
+  const vWhite = rx.vWhite, vBg = 0.35 * vWhite;
+  const cur = new Uint8Array(PC.SLOTS);
+  let valid = 0;
+  const cnt = new Uint32Array(9);             // 0..7 symbols, 8 = white/unknown
+  for (let i = 0; i < PC.SLOTS; i++) {
+    cnt.fill(0);
+    const pos = PC.slotPos(i), pc = Hm(pos[0], pos[1]);
+    const x0 = Math.max(0, (pc[0] - sr) | 0), x1 = Math.min(W - 1, pc[0] + sr | 0);
+    const y0 = Math.max(0, (pc[1] - sr) | 0), y1 = Math.min(H - 1, pc[1] + sr | 0);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const ddx = x - pc[0], ddy = y - pc[1];
+      if (ddx * ddx + ddy * ddy > sr2) continue;
+      const idx = y * W + x, v = rx.Val[idx];
+      if (v < vBg) continue;
+      if (rx.Sat[idx] < 60) {
+        if (v > 0.90 * vWhite) cnt[8]++;
+        else if (v > 0.62 * vWhite) cnt[6]++; else cnt[7]++;
+      } else {
+        cnt[Math.round((((rx.Hue[idx] + off2) % 180) * 2) / 60) % 6]++;
+      }
+    }
+    let best = 0, bi = 8;
+    for (let c = 0; c < 8; c++) if (cnt[c] > best) { best = cnt[c]; bi = c; }
+    cur[i] = bi;                               // 8 = unknown
+    if (bi !== 8) valid++;
+  }
+  rx.validFrac = valid / PC.SLOTS;
+
+  // temporal voting
+  for (let k = 0; k < PC.SLOTS * 8; k++) rx.hist[k] *= 0.88;
+  for (let i = 0; i < PC.SLOTS; i++) if (cur[i] !== 8) rx.hist[i * 8 + cur[i]] += 1;
+  rx.frames++;
+  let agree = 0, denom = 0;
+  for (let i = 0; i < PC.SLOTS; i++) {
+    if (cur[i] === 8) continue;
+    denom++;
+    let best = -1, bi = 0;
+    for (let c = 0; c < 8; c++) if (rx.hist[i * 8 + c] > best) { best = rx.hist[i * 8 + c]; bi = c; }
+    if (bi === cur[i]) agree++;
+  }
+  rx.agree = denom ? agree / denom : 0;
+  rx.lastStatus = 'locked';
+
+  if (rx.frames >= 8 && rx.agree > 0.86 && rx.validFrac > 0.8) {
+    const syms = new Uint8Array(PC.SLOTS);
+    for (let i = 0; i < PC.SLOTS; i++) {
+      let best = -1, bi = 0;
+      for (let c = 0; c < 8; c++) if (rx.hist[i * 8 + c] > best) { best = rx.hist[i * 8 + c]; bi = c; }
+      syms[i] = bi;
+    }
+    const d = PC.decodeState(PC.symbolsToState(syms));
+    if (d.ok) latchBlock(d);
+  }
+}
+
+function latchBlock(d) {
+  if (rx.session === -1) {
+    rx.session = d.session;
+  } else if (rx.session !== d.session) {
+    rx.latched.clear(); rx.session = d.session; rx.doneText = null;
+    $('result').style.display = 'none'; $('btnCopy').hidden = true;
+    log('sender edited the text — new session ' + d.session + ', dropping old blocks', 'hi');
+  }
+  rx.total = d.total;
+  const isNew = !rx.latched.has(d.id);
+  rx.latched.set(d.id, d.payload);
+  if (isNew) log(`block ${d.id + 1}/${d.total} latched${d.nerr ? ' (RS fixed ' + d.nerr + ' bytes)' : ''}`, 'ok');
+  renderChips();
+  if (rx.latched.size === d.total && rx.doneText === null) {
+    const total = Array.from(rx.latched.keys()).sort((a, b) => a - b)
+      .reduce((n, id) => n + rx.latched.get(id).length, 0);
+    const out = new Uint8Array(total);
+    let o = 0;
+    for (const id of Array.from(rx.latched.keys()).sort((a, b) => a - b)) {
+      out.set(rx.latched.get(id), o); o += rx.latched.get(id).length;
+    }
+    rx.doneText = new TextDecoder().decode(out);
+    $('result').textContent = rx.doneText;
+    $('result').style.display = 'block';
+    $('btnCopy').hidden = false;
+    log('✔ full message decoded: ' + JSON.stringify(rx.doneText.slice(0, 60)) +
+        (rx.doneText.length > 60 ? '…' : ''), 'ok');
+  }
+}
+function renderChips() {
+  const el = $('chips');
+  el.innerHTML = '';
+  if (rx.total < 1) return;
+  for (let i = 0; i < rx.total; i++) {
+    const c = document.createElement('span');
+    c.className = 'chip' + (rx.latched.has(i) ? ' got' : '');
+    c.textContent = 'block ' + (i + 1);
+    el.appendChild(c);
+  }
+}
+$('btnCopy').addEventListener('click', () => {
+  navigator.clipboard && navigator.clipboard.writeText(rx.doneText || '');
+  log('copied to clipboard');
+});
+
+/* --- overlay drawing --- */
+function drawOverlay(anchors) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const rect = overlay.getBoundingClientRect();
+  if (overlay.width !== Math.round(rect.width * dpr)) {
+    overlay.width = Math.round(rect.width * dpr);
+    overlay.height = Math.round(rect.height * dpr);
+  }
+  const W = overlay.width, H = overlay.height;
+  octx.clearRect(0, 0, W, H);
+  const locked = rx.lockedGeom && anchors;
+  const st = $('rxStatus');
+  st.textContent = rx.running ? (locked ? 'LOCKED — decoding' : 'SEARCHING for constellation…') : 'camera off';
+  st.className = 'status ' + (locked ? 'lock' : 'search');
+  $('rxMetrics').innerHTML =
+    `fps <b>${rx.fps.toFixed(0)}</b>` +
+    ` · agree <b>${(rx.agree * 100).toFixed(0)}%</b>` +
+    ` · valid <b>${(rx.validFrac * 100).toFixed(0)}%</b>` +
+    ` · hueΔ <b>${rx.hueOffDeg.toFixed(1)}°</b>` +
+    ` · frames <b>${rx.frames}</b>` +
+    ` · blocks <b>${rx.latched.size}${rx.total > 0 ? '/' + rx.total : ''}</b>`;
+  if (!locked || !anchors) return;
+  const sc = W / WORK_W;
+  const P = q => [q[0] * sc, q[1] * sc];
+  const quad = [anchors.TL, anchors.TR, anchors.BR, anchors.BL].map(P);
+  octx.strokeStyle = 'rgba(52,211,153,0.85)'; octx.lineWidth = 2;
+  octx.beginPath();
+  quad.forEach((p, i) => i ? octx.lineTo(p[0], p[1]) : octx.moveTo(p[0], p[1]));
+  octx.closePath(); octx.stroke();
+  octx.strokeStyle = 'rgba(251,191,36,0.9)';
+  octx.beginPath(); octx.arc(quad[0][0], quad[0][1], 14, 0, 7); octx.stroke();
+}
+
+/* --- camera loop --- */
+async function startCam() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    log('getUserMedia unavailable — needs HTTPS or localhost', 'err');
+    return;
+  }
+  try {
+    rx.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+  } catch (e) { log('camera denied: ' + e.message, 'err'); return; }
+  video.srcObject = rx.stream;
+  await video.play();
+  $('videoWrap').hidden = false;
+  rx.running = true;
+  log('camera on — point at the particle cloud', 'hi');
+  const work = rx.work, wctx = work.getContext('2d', { willReadFrequently: true });
+  let lastProc = 0;
+  function loop(t) {
+    if (!rx.running) return;
+    if (video.videoWidth && t - lastProc > 48) {
+      lastProc = t;
+      const asp = video.videoHeight / video.videoWidth;
+      work.width = WORK_W; work.height = Math.max(2, Math.round(WORK_W * asp));
+      wctx.drawImage(video, 0, 0, work.width, work.height);
+      try { processFrame(wctx.getImageData(0, 0, work.width, work.height)); }
+      catch (e) { log('pipeline error: ' + e.message, 'err'); rx.running = false; }
+      rx.fpsN++;
+      if (t - rx.fpsT > 1000) { rx.fps = rx.fpsN * 1000 / (t - rx.fpsT); rx.fpsN = 0; rx.fpsT = t; }
+      drawOverlay(rx.anchors);
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+}
+function stopCam() {
+  rx.running = false;
+  if (rx.stream) rx.stream.getTracks().forEach(t => t.stop());
+  rx.stream = null;
+  drawOverlay(null);
+  log('camera off');
+}
+$('btnCam').addEventListener('click', () => rx.running ? stopCam() : startCam());
+
+/* ============================== simulator ============================== */
+/* Draws the constellation with synthetic distortion (rotation, scale, hue shift,
+   brightness, per-pixel noise) and feeds the real decoder — proves the whole
+   stack without a camera. */
+async function runSim() {
+  $('btnSim').disabled = true;
+  log('simulated end-to-end test — 8 trials of synthetic frames', 'hi');
+  const msg = 'Simulated airgap transfer: no camera, no network, just colored light.';
+  const states = PC.encodeMessage(msg);
+  const syms = PC.stateToSymbols(states[0]);
+  const c = document.createElement('canvas'); c.width = c.height = 640;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  let pass = 0;
+  for (let trial = 0; trial < 8; trial++) {
+    let ok = false, framesUsed = 0, why = '';
+    try {
+      rxReset();
+      const rot = (Math.random() - 0.5) * 16 * Math.PI / 180;
+      const scl = 0.84 + Math.random() * 0.13;
+      const tx = (Math.random() - 0.5) * 0.06 * 640, ty = (Math.random() - 0.5) * 0.06 * 640;
+      const hueShift = (Math.random() - 0.5) * 28;
+      const bright = 0.86 + Math.random() * 0.18;
+      const sigma = 6 + Math.random() * 9;
+      for (let f = 0; f < 12 && !rx.latched.has(0); f++) {
+        cx.save();
+        cx.fillStyle = '#020308'; cx.fillRect(0, 0, 640, 640);
+        cx.translate(320 + tx, 320 + ty); cx.rotate(rot); cx.scale(scl, scl); cx.translate(-320, -320);
+        drawScene(cx, 640, 640, syms, { hueShift, bright: 1 });
+        cx.restore();
+        const img = cx.getImageData(0, 0, 640, 640);
+        const d = img.data;
+        for (let p = 0; p < d.length; p += 4) {
+          const n = () => (Math.random() + Math.random() - 1) * 1.25 * sigma;
+          d[p] = Math.max(0, Math.min(255, d[p] * bright + n()));
+          d[p + 1] = Math.max(0, Math.min(255, d[p + 1] * bright + n()));
+          d[p + 2] = Math.max(0, Math.min(255, d[p + 2] * bright + n()));
+        }
+        processFrame(img);
+        framesUsed++;
+        await new Promise(r => setTimeout(r, 0));
+      }
+      ok = rx.latched.has(0);
+      if (ok) {
+        const got = new TextDecoder().decode(rx.latched.get(0));
+        ok = got === new TextDecoder().decode(states[0].slice(4, 4 + states[0][3]));
+        if (!ok) why = ' (payload mismatch)';
+      } else why = ' — ' + rx.lastStatus;
+      var params = `rot ${(rot * 180 / Math.PI).toFixed(1)}° scale ${scl.toFixed(2)} hueΔ ${hueShift.toFixed(1)}° bright ${bright.toFixed(2)} σ${sigma.toFixed(0)} (${framesUsed} frames)`;
+    } catch (e) {
+      why = ' EXC: ' + e.message;
+    }
+    if (ok) pass++;
+    log(`trial ${trial + 1}: ${ok ? 'PASS' : 'fail'} — ${params || ''}${why}`, ok ? 'ok' : 'err');
+  }
+  log(`simulated end-to-end: ${pass}/8 trials decoded`, pass >= 6 ? 'ok' : 'err');
+  rxReset();
+  $('btnSim').disabled = false;
+}
+$('btnSim').addEventListener('click', runSim);
+
+/* ============================== boot ============================== */
+(function bootSelfTest() {
+  let ok = true;
+  for (let t = 0; t < 20; t++) {
+    const data = new Uint8Array(PC.RS_K);
+    for (let i = 0; i < PC.RS_K; i++) data[i] = (Math.random() * 256) | 0;
+    const cw = new Uint8Array(PC.RS_N);
+    cw.set(data); cw.set(PC._rs.rsParity(data), PC.RS_K);
+    const clean = Uint8Array.from(cw);
+    for (let e = 0; e < 3; e++) cw[(Math.random() * PC.RS_N) | 0] ^= 1 + ((Math.random() * 255) | 0);
+    const r = PC._rs.rsDecode(cw);
+    if (!r.ok || cw.some((v, i) => v !== clean[i])) { ok = false; break; }
+  }
+  log('RS codec self-test: ' + (ok ? 'PASS (20× random 3-byte-error corrections)' : 'FAIL'), ok ? 'ok' : 'err');
+})();
+
+/* tabs */
+const tabs = { 'tab-send': 'panel-send', 'tab-recv': 'panel-recv', 'tab-how': 'panel-how' };
+for (const [btn, panel] of Object.entries(tabs)) {
+  $(btn).addEventListener('click', () => {
+    for (const [b, p] of Object.entries(tabs)) {
+      $(b).classList.toggle('active', b === btn);
+      $(p).classList.toggle('show', p === panel);
+    }
+  });
+}
+window.addEventListener('resize', () => {
+  sizeSendCanvas();
+  sendCanvas.ctx.fillStyle = '#05060a';
+  sendCanvas.ctx.fillRect(0, 0, sendCanvas.width, sendCanvas.height);
+});
+</script>
+</body>
+</html>
