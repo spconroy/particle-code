@@ -494,40 +494,68 @@ const THEMES = {
   fire: {
     label: 'Campfire',
     motion: (jt, i, t, pos) => {
-      const rise = [0.3 * Math.sin(t * jt.w + jt.p[0]),
-                    -(0.35 + 0.3 * Math.sin(t * 0.8 * jt.w + jt.p[2]))];   // embers rise
-      return blend(flowVel(pos[0], pos[1], t), rise, 0.4, 1);
+      // convection: rise strength grows toward the fire — bottom particles are
+      // in the flames, top particles are the drifting smoke
+      const heat = Math.max(0.35, 1.35 - pos[1]);
+      const rise = [0.32 * Math.sin(t * jt.w + jt.p[0]) * heat,
+                    -(0.3 + 0.34 * Math.sin(t * 0.8 * jt.w + jt.p[2])) * heat];
+      return blend(flowVel(pos[0], pos[1], t), rise, 0.35, 1);
     },
     settle: t => 1 - Math.pow(1 - t, 3),
     twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.6 + 0.4 * Math.sin(t * 5 + i * 2.3) : 1,
     decor(ctx, W, H, t) {
       const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
       const P = (u, v) => [ox + u * S, oy + v * S];
-      // logs: dark, below the classifier's value floor
-      ctx.fillStyle = '#2a1c12';
-      for (const rot of [0.3, -0.35]) {
-        const c = P(0.5, 0.962);
+      const flick = 0.85 + 0.15 * Math.sin(t * 7.3) * Math.sin(t * 3.1 + 1.2);
+      // fire glow under-lighting the whole scene
+      const g = ctx.createRadialGradient(...P(0.5, 0.98), 0, ...P(0.5, 0.98), 0.62 * S);
+      g.addColorStop(0, 'rgba(255,150,60,' + (0.16 * flick).toFixed(3) + ')');
+      g.addColorStop(0.55, 'rgba(255,110,40,' + (0.06 * flick).toFixed(3) + ')');
+      g.addColorStop(1, 'rgba(255,90,30,0)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      // logs
+      ctx.fillStyle = '#3a2417';
+      for (const rot of [0.28, -0.32, 0.05]) {
+        const c = P(0.5, 0.958);
         ctx.save(); ctx.translate(c[0], c[1]); ctx.rotate(rot);
-        ctx.beginPath(); ctx.roundRect(-0.065 * S, -0.005 * S, 0.13 * S, 0.01 * S, 0.004 * S); ctx.fill();
+        ctx.beginPath(); ctx.roundRect(-0.085 * S, -0.007 * S, 0.17 * S, 0.014 * S, 0.006 * S); ctx.fill();
         ctx.restore();
       }
-      // flames: rise from the base, warm → red, tapering
-      for (let i = 0; i < 26; i++) {
-        const age = (t * 0.85 + i / 26) % 1;
-        const u = 0.5 + Math.sin(t * 3.1 + i * 2.63) * 0.022 * (0.35 + age * 0.8) + (h1(i * 7) - 0.5) * 0.015;
-        const v = 0.965 - age * 0.075;
-        const p = P(u, v);
-        ctx.globalAlpha = (1 - age) * (0.5 + 0.2 * Math.sin(t * 9 + i * 5));
-        ctx.fillStyle = age < 0.3 ? 'rgb(255,196,96)' : age < 0.65 ? 'rgb(255,120,52)' : 'rgb(190,64,44)';
-        ctx.beginPath(); ctx.arc(p[0], p[1], 2.6 * (1 - age) + 0.7, 0, 6.2832); ctx.fill();
+      // coal bed
+      for (let k = 0; k < 22; k++) {
+        const p = P(0.36 + 0.28 * h1(k * 3 + 0.5), 0.952 + 0.012 * h1(k * 5 + 2));
+        ctx.globalAlpha = (0.25 + 0.35 * h1(k + 7)) * (0.7 + 0.3 * Math.sin(t * 4 + k * 2.4));
+        ctx.fillStyle = h1(k * 2 + 3) > 0.5 ? 'rgb(255,120,50)' : 'rgb(255,80,40)';
+        ctx.beginPath(); ctx.arc(p[0], p[1], 1.6 + 1.2 * h1(k + 1), 0, 6.2832); ctx.fill();
       }
-      // sparks: bright, brief, small
+      // the blaze: flames rising into the lower constellation rows
+      for (let i = 0; i < 56; i++) {
+        const age = (t * 0.7 + i / 56) % 1;
+        const spread = 0.06 + 0.10 * age;
+        const u = 0.5 + Math.sin(t * 2.6 + i * 2.39) * spread * (0.4 + age) + (h1(i * 7) - 0.5) * 0.05;
+        const v = 0.965 - age * 0.30;                        // up to y ≈ 0.66
+        const p = P(u, v);
+        const size = (3.2 * (1 - age) + 0.9) * (0.7 + 0.3 * h1(i * 3 + 4));
+        ctx.globalAlpha = (1 - age) * (0.42 + 0.22 * Math.sin(t * 9 + i * 5)) * flick;
+        ctx.fillStyle = age < 0.3 ? 'rgb(255,200,100)' : age < 0.62 ? 'rgb(255,130,50)' : 'rgb(200,64,40)';
+        ctx.beginPath(); ctx.arc(p[0], p[1], size, 0, 6.2832); ctx.fill();
+      }
+      // ember column: the connective tissue between blaze and cloud
+      for (let i = 0; i < 20; i++) {
+        const age = (t * 0.3 + i / 20) % 1;
+        const p = P(0.5 + Math.sin(t * 2.2 + i * 5.3) * 0.10 * (0.3 + age) + (h1(i * 11) - 0.5) * 0.06,
+                    0.92 - age * 0.37);                      // 0.92 → 0.55
+        ctx.globalAlpha = Math.pow(1 - age, 0.6) * (0.3 + 0.2 * Math.sin(t * 6 + i * 3));
+        ctx.fillStyle = 'rgb(255,170,80)';
+        ctx.beginPath(); ctx.arc(p[0], p[1], 1 + 1.2 * h1(i * 3 + 2), 0, 6.2832); ctx.fill();
+      }
+      // sparks climbing high through the smoke, fading slowly
       ctx.fillStyle = 'rgb(255,214,130)';
-      for (let i = 0; i < 7; i++) {
-        const age = (t * 0.5 + i / 7) % 1;
-        const p = P(0.5 + Math.sin(t * 5 + i * 9.1) * 0.05, 0.955 - age * 0.16);
-        ctx.globalAlpha = (1 - age) * 0.75;
-        ctx.beginPath(); ctx.arc(p[0], p[1], 1.2, 0, 6.2832); ctx.fill();
+      for (let i = 0; i < 16; i++) {
+        const age = (t * 0.36 + i / 16) % 1;
+        const p = P(0.5 + Math.sin(t * 4 + i * 9.1) * 0.09 * (0.3 + age), 0.95 - age * 0.50);
+        ctx.globalAlpha = Math.pow(1 - age, 0.6) * 0.85;
+        ctx.beginPath(); ctx.arc(p[0], p[1], 1.1 + 0.6 * h1(i + 6), 0, 6.2832); ctx.fill();
       }
       ctx.globalAlpha = 1;
     }
