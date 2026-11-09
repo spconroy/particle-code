@@ -217,9 +217,10 @@
       <li><b>Dressing</b> — the drifting blue-white motes, faint nebula and motion trails are
           pure atmosphere (our nod to Apple's Quick Start cloud). The decoder never samples them:
           they're too small for the anchor filter and lose every symbol vote by ~25:1.</li>
-      <li><b>Themes</b> — nebula, orbit rings, jet stream and campfire are motion/decor skins over
-          the same codec: every theme's data dots stay inside their cell while swirling and land
-          exactly on their anchors at sample time; decor is stateless f(t), so the simulator
+      <li><b>Themes</b> — seven scenes (nebula, orbit rings, jet stream, campfire, solar system,
+          clouds, rainstorm) plus Auto, which reads the message's palette and picks its weather.
+          Scenes style the data particles by slot zone — flames, rain streaks, wind darts, cloud
+          puffs — always inside the decode contract; decor is stateless f(t), so the simulator
           proves each skin decodes.</li>
     </ul>
     <h3>Honest numbers</h3>
@@ -320,7 +321,16 @@ function drawDataDot(ctx, set, sym, x, y, r, uy, mode, alpha) {
     ctx.scale(0.55, 1.45);                          // slim falling streak
     blit(ctx, set.syms[sym], 0, 0, r * 0.5);
     ctx.restore();
-  } else if ((mode === 'fire' && uy < 0.45) || (mode === 'rain' && uy < 0.42)) {
+  } else if (mode === 'jet') {                      // wind darts: speed lines
+    ctx.globalAlpha = alpha * 0.20;
+    blit(ctx, set.syms[sym], x - r * 0.1, y, r * 1.5);
+    ctx.globalAlpha = alpha;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(1.45, 0.62);                          // stretched along the gust
+    blit(ctx, set.syms[sym], 0, 0, r * 0.55);
+    ctx.restore();
+  } else if ((mode === 'fire' && uy < 0.45) || (mode === 'rain' && uy < 0.42) || mode === 'clouds') {
     ctx.globalAlpha = alpha * 0.22;                 // smoke puff / cloud puff
     blit(ctx, set.syms[sym], x, y + r * 0.15, r * 1.6);
     ctx.globalAlpha = alpha;
@@ -358,7 +368,7 @@ function drawAmbient(ctx, W, H, t, alphaScale) {
   ctx.globalAlpha = 1;
 }
 const nebulaCache = {};
-function drawNebula(ctx, W, H, alpha) {
+function drawNebula(ctx, W, H, alpha, t) {
   const key = W + 'x' + H;
   if (!nebulaCache[key]) {
     const c = document.createElement('canvas'); c.width = W; c.height = H;
@@ -373,9 +383,29 @@ function drawNebula(ctx, W, H, alpha) {
     blob(0.52 * W, 0.24 * H, 0.35 * Math.min(W, H), 'rgba(38,30,72,0.35)');
     nebulaCache[key] = c;
   }
-  ctx.globalAlpha = alpha == null ? 0.06 : alpha;
-  ctx.drawImage(nebulaCache[key], 0, 0);
+  ctx.globalAlpha = alpha == null ? 0.085 : alpha;
+  if (t == null) {
+    ctx.drawImage(nebulaCache[key], 0, 0);
+  } else {
+    // slow living drift, tiled so edges never show
+    const dx = Math.sin(t * 0.021) * 0.030 * Math.min(W, H);
+    const dy = Math.cos(t * 0.017) * 0.022 * Math.min(W, H);
+    for (const tx of [0, -W]) for (const ty of [0, -H])
+      ctx.drawImage(nebulaCache[key], dx + tx, dy + ty);
+  }
   ctx.globalAlpha = 1;
+}
+// rare meteor streak (stateless, dim — far below the sampling floor)
+function shootingStar(ctx, W, H, t) {
+  const cyc = t % 8;
+  if (cyc > 0.4) return;
+  const seed = Math.floor(t / 8);
+  const p = Math.sin(cyc / 0.4 * Math.PI);
+  const x = (0.15 + 0.5 * h1(seed * 3 + 1)) * W + cyc / 0.4 * 0.35 * W;
+  const y = (0.08 + 0.25 * h1(seed * 5 + 2)) * H + cyc / 0.4 * 0.18 * H;
+  ctx.strokeStyle = 'rgba(210,225,255,' + (0.35 * p).toFixed(3) + ')';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.moveTo(x - 34, y - 17); ctx.lineTo(x, y); ctx.stroke();
 }
 
 /* Solid white anchors: capsule bar (TL) + three circles. Solid, not glow —
@@ -414,7 +444,7 @@ function drawScene(ctx, W, H, syms, opts) {
     blit(ctx, set.sats[i], p[0], p[1], A.satR * Math.min(W, H));
   });
   // depth dim lives inside drawDataDot's alpha; zones apply in the fire scene
-  const mode = (opts.themeName === 'fire' || opts.themeName === 'rain') ? opts.themeName : null;
+  const mode = ['fire', 'rain', 'clouds', 'jet'].includes(opts.themeName) ? opts.themeName : null;
   for (let i = 0; i < PC.SLOTS; i++) {
     const pos = PC.slotPos(i), p = toPx(pos[0], pos[1]);
     drawDataDot(ctx, set, syms[i], p[0], p[1], PC.dataR(i) * Math.min(W, H),
@@ -464,7 +494,7 @@ const THEMES = {
     },
     settle: t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); },
     twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.82 + 0.18 * Math.sin(t * 2.6 + i * 1.7) : 1,
-    decor(ctx, W, H, t) { drawNebula(ctx, W, H); }
+    decor(ctx, W, H, t) { drawNebula(ctx, W, H, undefined, t); shootingStar(ctx, W, H, t); }
   },
   rings: {
     label: 'Orbit rings',
@@ -487,9 +517,14 @@ const THEMES = {
         for (let k = 0; k < n; k++) {
           const th = 2 * Math.PI * k / n + t * sp * 10;
           const p = P(0.5 + r * Math.cos(th), 0.52 + b * Math.sin(th));
-          ctx.globalAlpha = 0.22 + 0.16 * (0.5 + 0.5 * Math.sin(th + Math.PI / 2));
+          ctx.globalAlpha = 0.38 + 0.20 * (0.5 + 0.5 * Math.sin(th + Math.PI / 2));
           ctx.beginPath(); ctx.arc(p[0], p[1], 1.3, 0, 6.2832); ctx.fill();
         }
+        // shepherd moon riding each ring
+        const th2 = -t * sp * 10 + 2.4;
+        const mp = P(0.5 + r * Math.cos(th2), 0.52 + b * Math.sin(th2));
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath(); ctx.arc(mp[0], mp[1], 2.2, 0, 6.2832); ctx.fill();
       }
       ctx.globalAlpha = 1;
     }
@@ -514,24 +549,24 @@ const THEMES = {
         return [ox + (0.5 + x * ca - y * sa) * S, oy + (0.5 + x * sa + y * ca) * S];
       };
       // exhaust: stateless pseudo-particles trailing the ship
-      for (let k = 0; k < 26; k++) {
-        const age = (t * 1.1 + k / 26) % 1, tp = t - age * 0.55;
+      for (let k = 0; k < 34; k++) {
+        const age = (t * 1.1 + k / 34) % 1, tp = t - age * 0.55;
         const [ex, ey] = path(tp);
         const spread = (0.5 + 2.5 * age);
         const px = ex + (h1(k * 7 + 3) - 0.5) * 9 * spread;
         const py = ey + (h1(k * 13 + 5) - 0.5) * 9 * spread;
         const warm = age < 0.35;
-        ctx.globalAlpha = (1 - age) * (warm ? 0.55 : 0.3);
+        ctx.globalAlpha = (1 - age) * (warm ? 0.65 : 0.34);
         ctx.fillStyle = warm ? 'rgb(255,200,110)' : 'rgb(150,152,166)';
-        ctx.beginPath(); ctx.arc(px, py, 1 + 2.6 * age, 0, 6.2832); ctx.fill();
+        ctx.beginPath(); ctx.arc(px, py, 1.2 + 3.0 * age, 0, 6.2832); ctx.fill();
       }
       ctx.globalAlpha = 1;
-      // ship: small white dart flying nose-first
+      // ship: white dart flying nose-first
       const [jx, jy] = path(t), [nx, ny] = path(t + 0.01);
       const ang = Math.atan2(ny - jy, nx - jx);
       ctx.save(); ctx.translate(jx, jy); ctx.rotate(ang);
       ctx.fillStyle = 'rgba(235,244,255,0.95)';
-      ctx.beginPath(); ctx.moveTo(7, 0); ctx.lineTo(-6, 3.6); ctx.lineTo(-3.4, 0); ctx.lineTo(-6, -3.6); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(11, 0); ctx.lineTo(-9, 5.4); ctx.lineTo(-5, 0); ctx.lineTo(-9, -5.4); ctx.closePath(); ctx.fill();
       ctx.restore();
     }
   },
@@ -553,8 +588,8 @@ const THEMES = {
       const flick = 0.85 + 0.15 * Math.sin(t * 7.3) * Math.sin(t * 3.1 + 1.2);
       // fire glow under-lighting the whole scene — strong enough to read as heat
       const g = ctx.createRadialGradient(...P(0.5, 0.98), 0, ...P(0.5, 0.98), 0.72 * S);
-      g.addColorStop(0, 'rgba(255,150,60,' + (0.24 * flick).toFixed(3) + ')');
-      g.addColorStop(0.5, 'rgba(255,110,40,' + (0.10 * flick).toFixed(3) + ')');
+      g.addColorStop(0, 'rgba(255,150,60,' + (0.19 * flick).toFixed(3) + ')');
+      g.addColorStop(0.5, 'rgba(255,110,40,' + (0.08 * flick).toFixed(3) + ')');
       g.addColorStop(1, 'rgba(255,90,30,0)');
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
       // logs
@@ -619,32 +654,48 @@ const THEMES = {
     decor(ctx, W, H, t) {
       const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
       const P = (u, v) => [ox + u * S, oy + v * S];
-      // radiant warm core (the "sun")
+      // radiant warm core + solid sun (small enough that RS shrugs it off)
       const g = ctx.createRadialGradient(...P(0.5, 0.5), 0, ...P(0.5, 0.5), 0.17 * S);
-      g.addColorStop(0, 'rgba(255,196,110,0.34)');
-      g.addColorStop(0.5, 'rgba(255,150,70,0.12)');
+      g.addColorStop(0, 'rgba(255,196,110,0.40)');
+      g.addColorStop(0.5, 'rgba(255,150,70,0.14)');
       g.addColorStop(1, 'rgba(255,130,60,0)');
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = 'rgb(255,216,150)';
+      ctx.beginPath(); ctx.arc(...P(0.5, 0.5), 0.021 * S, 0, 6.2832); ctx.fill();
       // orbit ellipses
-      ctx.strokeStyle = 'rgba(190,205,235,0.09)'; ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(190,205,235,0.16)'; ctx.lineWidth = 1;
       const ROT = -0.12;
       for (const r of [0.21, 0.29, 0.37, 0.45]) {
         ctx.beginPath();
         ctx.ellipse(...P(0.5, 0.5), r * S, r * 0.42 * S, ROT, 0, 6.2832);
         ctx.stroke();
       }
-      // wandering planets riding the orbits (decor)
-      const orbs = [[0.21, 0.34, 'rgb(214,184,140)', 2.2], [0.29, -0.22, 'rgb(150,192,232)', 2.7],
-                    [0.37, 0.15, 'rgb(204,164,204)', 1.8], [0.45, -0.11, 'rgb(172,204,216)', 3.2]];
+      // wandering planets riding the orbits (decor) — one carries a ring
+      const orbs = [[0.21, 0.34, 'rgb(214,184,140)', 3.4], [0.29, -0.22, 'rgb(150,192,232)', 4.2],
+                    [0.37, 0.15, 'rgb(204,164,204)', 3.0], [0.45, -0.11, 'rgb(172,204,216)', 4.8]];
       const ca = Math.cos(ROT), sa = Math.sin(ROT);
-      for (const [r, sp0, col, sz] of orbs) {
+      orbs.forEach(([r, sp0, col, sz], oi) => {
         const th = t * sp0;
         const ex = r * Math.cos(th), ey = r * 0.42 * Math.sin(th);
         const p = P(0.5 + ex * ca - ey * sa, 0.5 + ex * sa + ey * ca);
-        ctx.globalAlpha = 0.72; ctx.fillStyle = col;
+        ctx.globalAlpha = 0.8; ctx.fillStyle = col;
         ctx.beginPath(); ctx.arc(p[0], p[1], sz, 0, 6.2832); ctx.fill();
-      }
+        if (oi === 1) {
+          ctx.globalAlpha = 0.5;
+          ctx.strokeStyle = 'rgb(200,190,170)';
+          ctx.beginPath(); ctx.ellipse(p[0], p[1], sz * 2.1, sz * 0.8, 0.5, 0, 6.2832); ctx.stroke();
+        }
+      });
       ctx.globalAlpha = 1;
+      // occasional comet crossing (stateless, dim)
+      const ct = t % 11;
+      if (ct < 0.55) {
+        const p2 = Math.sin(ct / 0.55 * Math.PI);
+        const cp = P(0.85 - ct / 0.55 * 0.5, 0.12 + ct / 0.55 * 0.3);
+        ctx.strokeStyle = 'rgba(190,215,255,' + (0.35 * p2).toFixed(3) + ')';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(cp[0] - 40, cp[1] - 24); ctx.lineTo(cp[0], cp[1]); ctx.stroke();
+      }
     }
   },
   rain: {
@@ -726,17 +777,28 @@ const THEMES = {
     twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.9 + 0.1 * Math.sin(t * 1.2 + i * 0.7) : 1,
     decor(ctx, W, H, t) {
       // soft cumulus puffs drifting horizontally, wrap-around, kept dim
-      for (let k = 0; k < 9; k++) {
+      for (let k = 0; k < 12; k++) {
         const yy = 0.16 + 0.72 * h1(k * 3 + 0.7);
         const speed = (0.010 + 0.024 * h1(k + 4.2)) * (0.4 + 0.6 * h1(k * 2 + 9));
         const xx = ((h1(k * 5 + 2.2) + t * speed) % 1.3) - 0.15;
         const r = (0.05 + 0.07 * h1(k * 7 + 1.1)) * Math.min(W, H);
-        const a = 0.05 + 0.06 * h1(k + 8.8);
+        const a = 0.07 + 0.06 * h1(k + 8.8);
         const g = ctx.createRadialGradient(xx * W, yy * H, 0, xx * W, yy * H, r);
-        g.addColorStop(0, 'rgba(205,220,245,' + a + ')');
+        g.addColorStop(0, 'rgba(205,220,245,' + a.toFixed(3) + ')');
         g.addColorStop(1, 'rgba(205,220,245,0)');
         ctx.fillStyle = g;
         ctx.beginPath(); ctx.arc(xx * W, yy * H, r, 0, 6.2832); ctx.fill();
+      }
+      // long wisps of high cloud
+      for (let k = 0; k < 3; k++) {
+        const yy = (0.3 + 0.5 * h1(k * 9 + 3)) * H;
+        const xx = (((h1(k * 4 + 8) + t * (0.008 + 0.01 * h1(k + 5))) % 1.2) - 0.1) * W;
+        const g = ctx.createLinearGradient(xx - 0.18 * W, yy, xx + 0.18 * W, yy);
+        g.addColorStop(0, 'rgba(200,215,240,0)');
+        g.addColorStop(0.5, 'rgba(200,215,240,0.06)');
+        g.addColorStop(1, 'rgba(200,215,240,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(xx - 0.18 * W, yy - 0.012 * H, 0.36 * W, 0.024 * H);
       }
     }
   }
@@ -867,7 +929,7 @@ function senderFrameInner(now) {
     } else {
       drawDataDot(ctx, set, frameSyms[i], p[0] + dx, p[1] + dy,
                   ri * (1 + 0.07 * sway * Math.sin(t * 2.2 + i)), pos[1],
-                  (themeName === 'fire' || themeName === 'rain') ? themeName : null, tw * dim);
+                  ['fire', 'rain', 'clouds', 'jet'].includes(themeName) ? themeName : null, tw * dim);
     }
   }
 
