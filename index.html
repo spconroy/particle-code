@@ -238,7 +238,7 @@
 </main>
 <div class="footer">ParticleCode prototype — encode light, decode with a lens.</div>
 
-<script src="codec.js?v=7"></script>
+<script src="codec.js?v=8"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -901,10 +901,22 @@ function senderFrameInner(now) {
   const idle = sender.states.length === 0;
   const k = idle ? 0 : Math.max(0, Math.floor(now / STATE_MS)) % sender.states.length;
   const ph = (now % STATE_MS) / STATE_MS;
-  const sway = ph < FLOAT_FRAC
-    ? 1
-    : 1 - theme.settle(Math.min(1, (ph - FLOAT_FRAC) / (1 - FLOAT_FRAC)));
+  // seamless-loop envelope: sway starts and ENDS at 0 with zero initial
+  // velocity, so state boundaries never jerk dots off their anchors —
+  // rise (smoothstep) → swirl plateau → themed settle ease → hold at rest
+  const RISE = 0.32, FALL0 = 0.48, FALL1 = 0.68;
+  const smooth = x => x * x * (3 - 2 * x);
+  let sway;
+  if (ph < RISE) sway = smooth(ph / RISE);
+  else if (ph < FALL0) sway = 1;
+  else if (ph < FALL1) sway = 1 - theme.settle((ph - FALL0) / (FALL1 - FALL0));
+  else sway = 0;                                        // settle plateau (sampled here)
   const iScale = (parseInt($('intensity').value, 10) / 100) * sway;
+  // block colors melt in during early float instead of popping in one frame
+  const CROSS = 0.22;
+  const prevK = (k - 1 + sender.states.length) % sender.states.length;
+  const cfRaw = idle ? 1 : Math.min(1, ph / CROSS);
+  const cf = smooth(cfRaw);
   const toPx = unitToPx(W, H), set = spriteSet(0, 1);
   const t = now / 1000;
 
@@ -964,9 +976,14 @@ function senderFrameInner(now) {
       blit(ctx, set.anchor, p[0] + dx, p[1] + dy, ri * 0.5); // white motes, free swarm
       ctx.globalAlpha = 1;
     } else {
+      const dotMode = ['rain', 'clouds', 'jet'].includes(themeName) ? themeName : null;
+      const dr = ri * (1 + 0.07 * sway * Math.sin(t * 2.2 + i));
+      if (cf < 1) {   // melt from the previous block's palette
+        drawDataDot(ctx, set, sender.syms[prevK][i], p[0] + dx, p[1] + dy,
+                    dr, pos[1], dotMode, tw * dim * (1 - cf));
+      }
       drawDataDot(ctx, set, frameSyms[i], p[0] + dx, p[1] + dy,
-                  ri * (1 + 0.07 * sway * Math.sin(t * 2.2 + i)), pos[1],
-                  ['rain', 'clouds', 'jet'].includes(themeName) ? themeName : null, tw * dim);
+                  dr, pos[1], dotMode, tw * dim * cf);
     }
   }
 
