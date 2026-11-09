@@ -286,6 +286,36 @@ function blit(ctx, sprite, x, y, r) {
   const d = (r / CORE) * 2;
   ctx.drawImage(sprite, x - d / 2, y - d / 2, d, d);
 }
+/* Zone-styled data dot. In the fire scene the particles themselves are the
+   flames and smoke: slim tall tongues at the base (draw radius is halved
+   before the 1.7x vertical stretch, so the stretched bright core stays
+   inside 0.52x local spacing — clear of every neighbour's sampling disc),
+   embers in the middle, soft-haloed smoke above. Zones are slot properties
+   (unit-y), so the live sender and the simulator render identical shapes. */
+function drawDataDot(ctx, set, sym, x, y, r, uy, isFire, alpha) {
+  if (isFire && uy > 0.62) {                        // flame zone
+    const c = SYM_RGB[sym];
+    const g = ctx.createLinearGradient(x, y + r * 0.6, x, y + r * 2.7);
+    g.addColorStop(0, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',0.22)');
+    g.addColorStop(1, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',0)');
+    ctx.fillStyle = g;                              // heat tail (below value floor)
+    ctx.fillRect(x - r * 0.4, y + r * 0.6, r * 0.8, r * 2.1);
+    ctx.globalAlpha = alpha;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(0.5, 1.7);                            // slim rising tongue
+    blit(ctx, set.syms[sym], 0, 0, r * 0.5);
+    ctx.restore();
+  } else if (isFire && uy < 0.45) {                 // smoke zone
+    ctx.globalAlpha = alpha * 0.30;
+    blit(ctx, set.syms[sym], x, y + r * 0.18, r * 1.85);   // soft under-halo
+    ctx.globalAlpha = alpha;
+    blit(ctx, set.syms[sym], x, y, r * 0.92);
+  } else {                                          // round: embers + all other themes
+    ctx.globalAlpha = alpha;
+    blit(ctx, set.syms[sym], x, y, r);
+  }
+}
 function unitToPx(W, H) {
   const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
   return (u, v) => [ox + u * S, oy + v * S];
@@ -369,12 +399,12 @@ function drawScene(ctx, W, H, syms, opts) {
     const p = toPx(s.p[0], s.p[1]);
     blit(ctx, set.sats[i], p[0], p[1], A.satR * Math.min(W, H));
   });
+  // depth dim lives inside drawDataDot's alpha; zones apply in the fire scene
+  const isFire = (opts.themeName || 'nebula') === 'fire';
   for (let i = 0; i < PC.SLOTS; i++) {
     const pos = PC.slotPos(i), p = toPx(pos[0], pos[1]);
-    // depth dim: far hue dots render dimmer (grays stay full-value — their
-    // luminance class must not drift)
-    ctx.globalAlpha = syms[i] < 6 ? 0.70 + 0.30 * PC.slotDepth(i) : 1;
-    blit(ctx, set.syms[syms[i]], p[0], p[1], PC.dataR(i) * Math.min(W, H));
+    drawDataDot(ctx, set, syms[i], p[0], p[1], PC.dataR(i) * Math.min(W, H),
+                pos[1], isFire, syms[i] < 6 ? 0.70 + 0.30 * PC.slotDepth(i) : 1);
   }
   ctx.globalAlpha = 1;
 }
@@ -528,31 +558,32 @@ const THEMES = {
         ctx.fillStyle = h1(k * 2 + 3) > 0.5 ? 'rgb(255,120,50)' : 'rgb(255,80,40)';
         ctx.beginPath(); ctx.arc(p[0], p[1], 1.6 + 1.2 * h1(k + 1), 0, 6.2832); ctx.fill();
       }
-      // the blaze: flames rising into the lower constellation rows
-      for (let i = 0; i < 56; i++) {
-        const age = (t * 0.7 + i / 56) % 1;
-        const spread = 0.06 + 0.10 * age;
-        const u = 0.5 + Math.sin(t * 2.6 + i * 2.39) * spread * (0.4 + age) + (h1(i * 7) - 0.5) * 0.05;
-        const v = 0.965 - age * 0.30;                        // up to y ≈ 0.66
+      // the fire pit: a modest blaze at the base — the DATA particles are the
+      // main flames now, so decor stays low and small
+      for (let i = 0; i < 22; i++) {
+        const age = (t * 0.7 + i / 22) % 1;
+        const spread = 0.05 + 0.06 * age;
+        const u = 0.5 + Math.sin(t * 2.6 + i * 2.39) * spread * (0.4 + age) + (h1(i * 7) - 0.5) * 0.04;
+        const v = 0.968 - age * 0.16;                        // up to y ≈ 0.81
         const p = P(u, v);
-        const size = (3.2 * (1 - age) + 0.9) * (0.7 + 0.3 * h1(i * 3 + 4));
-        ctx.globalAlpha = (1 - age) * (0.42 + 0.22 * Math.sin(t * 9 + i * 5)) * flick;
+        const size = (2.2 * (1 - age) + 0.8) * (0.7 + 0.3 * h1(i * 3 + 4));
+        ctx.globalAlpha = (1 - age) * (0.45 + 0.2 * Math.sin(t * 9 + i * 5)) * flick;
         ctx.fillStyle = age < 0.3 ? 'rgb(255,200,100)' : age < 0.62 ? 'rgb(255,130,50)' : 'rgb(200,64,40)';
         ctx.beginPath(); ctx.arc(p[0], p[1], size, 0, 6.2832); ctx.fill();
       }
-      // ember column: the connective tissue between blaze and cloud
-      for (let i = 0; i < 20; i++) {
-        const age = (t * 0.3 + i / 20) % 1;
+      // ember column: sparse bridging (the data flames carry most of it)
+      for (let i = 0; i < 10; i++) {
+        const age = (t * 0.3 + i / 10) % 1;
         const p = P(0.5 + Math.sin(t * 2.2 + i * 5.3) * 0.10 * (0.3 + age) + (h1(i * 11) - 0.5) * 0.06,
-                    0.92 - age * 0.37);                      // 0.92 → 0.55
+                    0.90 - age * 0.20);                      // 0.90 → 0.70
         ctx.globalAlpha = Math.pow(1 - age, 0.6) * (0.3 + 0.2 * Math.sin(t * 6 + i * 3));
         ctx.fillStyle = 'rgb(255,170,80)';
         ctx.beginPath(); ctx.arc(p[0], p[1], 1 + 1.2 * h1(i * 3 + 2), 0, 6.2832); ctx.fill();
       }
       // sparks climbing high through the smoke, fading slowly
       ctx.fillStyle = 'rgb(255,214,130)';
-      for (let i = 0; i < 16; i++) {
-        const age = (t * 0.36 + i / 16) % 1;
+      for (let i = 0; i < 10; i++) {
+        const age = (t * 0.36 + i / 10) % 1;
         const p = P(0.5 + Math.sin(t * 4 + i * 9.1) * 0.09 * (0.3 + age), 0.95 - age * 0.50);
         ctx.globalAlpha = Math.pow(1 - age, 0.6) * 0.85;
         ctx.beginPath(); ctx.arc(p[0], p[1], 1.1 + 0.6 * h1(i + 6), 0, 6.2832); ctx.fill();
@@ -747,14 +778,15 @@ function senderFrameInner(now) {
       : theme.twinkle(ph, i, t);
     // depth dim: far hue dots dimmer, grays full-value (luminance class safety)
     const dim = (idle || frameSyms[i] >= 6) ? 1 : 0.70 + 0.30 * PC.slotDepth(i);
-    ctx.globalAlpha = tw * dim;
     if (idle) {
+      ctx.globalAlpha = tw;
       blit(ctx, set.anchor, p[0] + dx, p[1] + dy, ri * 0.5); // white motes, free swarm
+      ctx.globalAlpha = 1;
     } else {
-      blit(ctx, set.syms[frameSyms[i]], p[0] + dx, p[1] + dy,
-           ri * (1 + 0.07 * sway * Math.sin(t * 2.2 + i)));
+      drawDataDot(ctx, set, frameSyms[i], p[0] + dx, p[1] + dy,
+                  ri * (1 + 0.07 * sway * Math.sin(t * 2.2 + i)), pos[1],
+                  themeName === 'fire', tw * dim);
     }
-    ctx.globalAlpha = 1;
   }
 
   $('sendHud').innerHTML = idle
