@@ -27,8 +27,9 @@
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   label{font-size:13px;color:var(--dim)}
-  textarea,input[type=text]{width:100%;background:var(--panel2);border:1px solid var(--line);
+  textarea,input[type=text],input[type=password]{width:100%;background:var(--panel2);border:1px solid var(--line);
     color:var(--fg);border-radius:8px;padding:10px 12px;font:inherit}
+  input[type=checkbox]{accent-color:var(--accent);margin-right:6px}
   textarea{min-height:64px;resize:vertical;font-family:var(--mono);font-size:13px}
   select,input[type=range]{accent-color:var(--accent)}
   select{background:var(--panel2);color:var(--fg);border:1px solid var(--line);
@@ -93,7 +94,23 @@
 <section id="panel-send" class="panel show">
   <div class="cols">
     <div class="card">
-      <label for="payload">Payload (UTF-8)</label>
+      <div class="row" style="margin-bottom:10px">
+        <label>Payload type
+          <select id="pType">
+            <option value="text">Plain text</option>
+            <option value="url">URL</option>
+            <option value="wifi">Wi-Fi network</option>
+            <option value="vcard">Contact (vCard)</option>
+            <option value="email">Email</option>
+            <option value="tel">Phone</option>
+            <option value="sms">SMS</option>
+            <option value="geo">Location</option>
+            <option value="otp">2FA seed (TOTP)</option>
+          </select>
+        </label>
+      </div>
+      <div id="pForm"></div>
+      <label for="payload">Payload (UTF-8) — auto-built by the form, or edit directly</label>
       <textarea id="payload" spellcheck="false">Hello from the particle cloud! This message traveled through colored light — no network, no pairing, just a camera. 🚀</textarea>
       <div class="row" style="margin-top:12px">
         <button id="btnBeam" class="act primary">Start beaming</button>
@@ -147,6 +164,7 @@
       <div class="metrics" id="rxMetrics"></div>
       <div class="chips" id="chips"></div>
       <div id="result"></div>
+      <div class="row" style="margin-top:8px" id="payloadActions"></div>
       <div class="row" style="margin-top:8px">
         <button id="btnCopy" class="act" hidden>Copy decoded text</button>
       </div>
@@ -167,6 +185,11 @@
        → the color of 160 particles. Blocks cycle continuously; the receiver latches any block
        that decodes cleanly, in any order, at any time. The <code>session</code> byte bumps on
        every edit, so live typing on the sender cleanly replaces what the receiver holds.</p>
+    <p>The codec is payload-agnostic (it carries UTF-8, like QR carries bytes), so it speaks the
+       standard QR payload conventions: URL, <code>WIFI:</code>, vCard, <code>mailto:</code>,
+       <code>tel:</code>, <code>SMSTO:</code>, <code>geo:</code> and <code>otpauth://</code>.
+       The sender builds the standard string from a form; the receiver recognizes it and offers
+       the web-native action — open the link, copy the Wi-Fi password, save a .vcf, and so on.</p>
     <h3>Why 8 colors and not 24-bit RGB</h3>
     <p>A camera channel mangles colors: auto white balance, exposure, gamma, chroma-subsampled
        video. Two decades of color-barcode research (Microsoft's HCCB, COBRA, PixNet…) converged
@@ -615,6 +638,121 @@ $('payload').addEventListener('input', () => {
   typeTimer = setTimeout(reEncode, 250);
 });
 
+/* ---- structured payload builders (standard QR payload conventions) ----
+   The codec carries UTF-8 bytes, so every QR payload format "just works":
+   the sender assembles the standard string, the receiver recognizes it. */
+const wifiEsc = s => s.replace(/([\\;,:"])/g, '\\$1');
+const P_BUILDERS = {
+  text: null,
+  url: {
+    fields: [{ k: 'url', label: 'URL', ph: 'example.com/page' }],
+    build: v => !v.url ? '' : (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(v.url) ? v.url : 'https://' + v.url)
+  },
+  wifi: {
+    fields: [
+      { k: 'ssid', label: 'Network name (SSID)' },
+      { k: 'pass', label: 'Password', type: 'password' },
+      { k: 'enc', label: 'Security', type: 'select', options: ['WPA', 'WEP', 'nopass'] },
+      { k: 'hidden', label: 'Hidden network', type: 'check' }
+    ],
+    build: v => !v.ssid ? '' : 'WIFI:T:' + (v.enc || 'WPA') + ';S:' + wifiEsc(v.ssid) + ';' +
+      (v.enc === 'nopass' ? '' : 'P:' + wifiEsc(v.pass || '') + ';') +
+      (v.hidden ? 'H:true;' : '') + ';'
+  },
+  vcard: {
+    fields: [
+      { k: 'name', label: 'Full name' }, { k: 'org', label: 'Organization' },
+      { k: 'phone', label: 'Phone' }, { k: 'email', label: 'Email' }, { k: 'url', label: 'Website' }
+    ],
+    build: v => !v.name ? '' : 'BEGIN:VCARD\nVERSION:3.0\nFN:' + v.name + '\nN:' + v.name +
+      (v.org ? '\nORG:' + v.org : '') + (v.phone ? '\nTEL:' + v.phone : '') +
+      (v.email ? '\nEMAIL:' + v.email : '') + (v.url ? '\nURL:' + v.url : '') + '\nEND:VCARD'
+  },
+  email: {
+    fields: [
+      { k: 'to', label: 'To' }, { k: 'subject', label: 'Subject' }, { k: 'body', label: 'Body' }
+    ],
+    build: v => !v.to ? '' : 'mailto:' + v.to +
+      (v.subject || v.body ? '?' : '') + (v.subject ? 'subject=' + encodeURIComponent(v.subject) : '') +
+      (v.subject && v.body ? '&' : '') + (v.body ? 'body=' + encodeURIComponent(v.body) : '')
+  },
+  tel: {
+    fields: [{ k: 'tel', label: 'Phone number', ph: '+15551234567' }],
+    build: v => !v.tel ? '' : 'tel:' + v.tel.replace(/[^\d+]/g, '')
+  },
+  sms: {
+    fields: [{ k: 'num', label: 'Phone number' }, { k: 'msg', label: 'Message' }],
+    build: v => !v.num ? '' : 'SMSTO:' + v.num.replace(/[^\d+]/g, '') + ':' + (v.msg || '')
+  },
+  geo: {
+    fields: [{ k: 'lat', label: 'Latitude', ph: '37.7749' }, { k: 'lng', label: 'Longitude', ph: '-122.4194' }],
+    build: v => (v.lat && v.lng) ? 'geo:' + v.lat + ',' + v.lng : ''
+  },
+  otp: {
+    fields: [
+      { k: 'label', label: 'Account label', ph: 'alice@example.com' },
+      { k: 'secret', label: 'Secret (base32)', ph: 'JBSWY3DPEHPK3PXP' },
+      { k: 'issuer', label: 'Issuer' }
+    ],
+    build: v => !v.secret ? '' : 'otpauth://totp/' + encodeURIComponent(v.label || '') +
+      '?secret=' + v.secret.replace(/\s+/g, '') + (v.issuer ? '&issuer=' + encodeURIComponent(v.issuer) : '')
+  }
+};
+let assembling = false;
+function renderPayloadForm() {
+  const type = $('pType').value, b = P_BUILDERS[type], el = $('pForm');
+  el.innerHTML = '';
+  if (!b || !b.fields) { assemblePayload(); return; }
+  b.fields.forEach(f => {
+    const wrap = document.createElement('div');
+    wrap.style.marginBottom = '8px';
+    const lab = document.createElement('label');
+    lab.textContent = f.label;
+    lab.htmlFor = 'pf_' + f.k;
+    wrap.appendChild(lab);
+    let input;
+    if (f.type === 'select') {
+      input = document.createElement('select');
+      input.className = 'formCtl';
+      f.options.forEach(o => { const op = document.createElement('option'); op.value = op.textContent = o; input.appendChild(op); });
+    } else if (f.type === 'check') {
+      input = document.createElement('input'); input.type = 'checkbox';
+      wrap.insertBefore(input, lab);
+    } else {
+      input = document.createElement('input');
+      input.type = f.type === 'password' ? 'password' : 'text';
+      if (f.ph) input.placeholder = f.ph;
+      input.style.width = '100%';
+    }
+    input.id = 'pf_' + f.k;
+    input.addEventListener('input', assemblePayload);
+    input.addEventListener('change', assemblePayload);
+    wrap.appendChild(input);
+    el.appendChild(wrap);
+  });
+  assemblePayload();
+}
+function assemblePayload() {
+  const type = $('pType').value, b = P_BUILDERS[type];
+  if (!b) return;
+  const v = {};
+  b.fields.forEach(f => {
+    const el = $('pf_' + f.k);
+    v[f.k] = el ? (el.type === 'checkbox' ? el.checked : el.value.trim()) : '';
+  });
+  const s = b.build(v);
+  assembling = true;
+  const ta = $('payload');
+  if (ta.value !== s) { ta.value = s; ta.dispatchEvent(new Event('input')); }
+  assembling = false;
+}
+$('pType').addEventListener('change', renderPayloadForm);
+// manual textarea edits while a structured type is active -> fall back to plain text
+$('payload').addEventListener('input', () => {
+  if (assembling) return;
+  if ($('pType').value !== 'text') { $('pType').value = 'text'; renderPayloadForm(); }
+});
+
 function startBeaming() {
   reEncode();
   sender.t0 = performance.now();
@@ -672,6 +810,7 @@ function rxReset() {
   rx.hist.fill(0); rx.frames = 0; rx.lockedGeom = false; rx.latched.clear();
   rx.total = -1; rx.session = -1; rx.doneText = null; rx.agree = 0;
   $('chips').innerHTML = ''; $('result').style.display = 'none'; $('btnCopy').hidden = true;
+  $('payloadActions').innerHTML = '';
   log('decoder reset');
 }
 $('btnReset').addEventListener('click', rxReset);
@@ -878,6 +1017,7 @@ function latchBlock(d) {
   } else if (rx.session !== d.session) {
     rx.latched.clear(); rx.session = d.session; rx.doneText = null;
     $('result').style.display = 'none'; $('btnCopy').hidden = true;
+    $('payloadActions').innerHTML = '';
     log('sender edited the text — new session ' + d.session + ', dropping old blocks', 'hi');
   }
   rx.total = d.total;
@@ -897,6 +1037,7 @@ function latchBlock(d) {
     $('result').textContent = rx.doneText;
     $('result').style.display = 'block';
     $('btnCopy').hidden = false;
+    renderPayloadActions(rx.doneText);
     log('✔ full message decoded: ' + JSON.stringify(rx.doneText.slice(0, 60)) +
         (rx.doneText.length > 60 ? '…' : ''), 'ok');
   }
@@ -916,6 +1057,65 @@ $('btnCopy').addEventListener('click', () => {
   navigator.clipboard && navigator.clipboard.writeText(rx.doneText || '');
   log('copied to clipboard');
 });
+
+/* ---- receiver-side payload recognition (standard QR payload conventions).
+   A web page can't silently join Wi-Fi or add contacts, so we offer the
+   web-native action: open, copy, or download. */
+function renderPayloadActions(text) {
+  const el = $('payloadActions');
+  el.innerHTML = '';
+  const btn = (label, fn, primary) => {
+    const b = document.createElement('button');
+    b.className = 'act' + (primary ? ' primary' : '');
+    b.textContent = label; b.addEventListener('click', fn);
+    el.appendChild(b); return b;
+  };
+  const note = s => { const d = document.createElement('span'); d.className = 'hint'; d.textContent = s; el.appendChild(d); };
+  const copy = s => () => { navigator.clipboard && navigator.clipboard.writeText(s); log('copied'); };
+  let m;
+  if ((m = text.match(/^https?:\/\/\S+$/i))) {
+    const a = document.createElement('a');
+    a.href = m[0]; a.target = '_blank'; a.rel = 'noopener';
+    a.className = 'act primary'; a.textContent = 'Open link ↗';
+    el.appendChild(a); note(new URL(m[0]).host);
+  } else if ((m = text.match(/^WIFI:(.*);;?$/))) {
+    const get = k => { const mm = m[1].match(new RegExp(k + ':((?:\\\\.|[^;])*)')); return mm ? mm[1].replace(/\\(.)/g, '$1') : ''; };
+    note('Wi-Fi: ' + (get('S') || '?') + (get('T') === 'nopass' ? ' (open)' : ' · ' + (get('T') || 'WPA')));
+    if (get('P')) btn('Copy password', copy(get('P')));
+  } else if (/^BEGIN:VCARD/.test(text)) {
+    const f = k => (text.match(new RegExp('^' + k + ':(.*)$', 'm')) || [, ''])[1];
+    note('Contact: ' + (f('FN') || '?') + (f('TEL') ? ' · ' + f('TEL') : ''));
+    btn('Save contact (.vcf)', () => {
+      const blob = new Blob([text], { type: 'text/vcard' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = (f('FN') || 'contact').replace(/\W+/g, '_') + '.vcf';
+      a.click(); URL.revokeObjectURL(a.href);
+    }, true);
+  } else if ((m = text.match(/^mailto:([^?]+)/i))) {
+    const a = document.createElement('a');
+    a.href = text; a.className = 'act primary'; a.textContent = 'Write email ✉';
+    el.appendChild(a);
+  } else if ((m = text.match(/^tel:([\d+]+)/i))) {
+    const a = document.createElement('a');
+    a.href = text; a.className = 'act primary'; a.textContent = 'Call ' + m[1];
+    el.appendChild(a);
+  } else if ((m = text.match(/^SMSTO:([\d+]+):?/i))) {
+    const a = document.createElement('a');
+    a.href = 'sms:' + m[1]; a.className = 'act primary'; a.textContent = 'Text ' + m[1];
+    el.appendChild(a);
+  } else if ((m = text.match(/^geo:(-?[\d.]+),(-?[\d.]+)/i))) {
+    const a = document.createElement('a');
+    a.href = 'https://maps.google.com/?q=' + m[1] + ',' + m[2];
+    a.target = '_blank'; a.rel = 'noopener';
+    a.className = 'act primary'; a.textContent = 'Open map 📍';
+    el.appendChild(a);
+  } else if ((m = text.match(/^otpauth:\/\/totp\/([^?]*)\?(.*)$/i))) {
+    const q = new URLSearchParams(m[2]);
+    note('TOTP: ' + (q.get('issuer') ? q.get('issuer') + ' · ' : '') + decodeURIComponent(m[1] || ''));
+    if (q.get('secret')) btn('Copy secret', copy(q.get('secret')));
+  }
+}
+
 
 /* --- overlay drawing --- */
 function drawOverlay(anchors) {

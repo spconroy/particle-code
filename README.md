@@ -56,6 +56,12 @@ credentials, TOTP seeds, keys, and short text in a few seconds. (An animated-QR 
 moves ~50× more data; ParticleCode trades bandwidth for a format people enjoy pointing
 cameras at.)
 
+## Payload types
+
+The codec carries UTF-8, so it speaks the standard QR payload conventions out of the box — the sender builds them from structured forms, the receiver recognizes the decoded string and offers the web-native action (open the link, copy the Wi-Fi password, save a `.vcf`, open the map…):
+
+URL · `WIFI:` (with proper `\\;,:"` escaping) · vCard 3.0 · `mailto:` · `tel:` · `SMSTO:` · `geo:` · `otpauth://totp` · plain text
+
 ## Repo layout
 
 - `index.html` — the whole app: sender (canvas particle renderer) + receiver (camera
