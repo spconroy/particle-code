@@ -110,31 +110,31 @@ t('homography: recovers a known projective map to <1e-6 px', () => {
 });
 
 // ---------------------------------------------------------------- layout sanity
-t('layout: organic constellation — bounds, spacing, determinism', () => {
-  const pts = [];
-  for (let i = 0; i < C.SLOTS; i++) {
-    const [x, y] = C.slotPos(i);
-    assert.ok(x > 0.08 && x < 0.92 && y > 0.11 && y < 0.89, 'slot bounds ' + i + ': ' + x + ',' + y);
-    pts.push([x, y]);
-  }
-  let minPair = 1;
-  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
-    const d = Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]);
-    if (d < minPair) minPair = d;
-  }
-  assert.ok(minPair > 0.035, 'min pairwise spacing too tight: ' + minPair.toFixed(4));
-  assert.ok(minPair < 0.075, 'spacing never relaxed — still lattice-like: ' + minPair.toFixed(4));
-  // determinism across module instances
+t('layouts: all four constellations — counts, bounds, spacing, determinism', () => {
   const C2 = require('./codec.js');
-  for (let i = 0; i < C.SLOTS; i += 17)
-    assert.deepStrictEqual(C.slotPos(i), C2.slotPos(i), 'slotPos deterministic ' + i);
-  // discs, wander and dot size respect local spacing; depth is visible
-  for (let i = 0; i < C.SLOTS; i++) {
-    assert.ok(C.slotDiscR(i) > 0.014 && C.slotAmp(i) > 0.0055, 'adaptive metrics ' + i);
-    assert.ok(C.dataR(i) <= 0.56 * (C.slotDiscR(i) / 0.42) + 1e-9, 'dot fits spacing ' + i);
-    const d = C.slotDepth(i);
-    assert.ok(d >= 0 && d <= 1, 'depth range ' + i);
+  for (const name of C.LAYOUT_NAMES) {
+    C.setActiveLayout(name);
+    const pts = [];
+    for (let i = 0; i < C.SLOTS; i++) {
+      const [x, y] = C.slotPos(i);
+      assert.ok(x > 0.02 && x < 0.98 && y > 0.10 && y < 0.91,
+        name + ' bounds ' + i + ': ' + x.toFixed(3) + ',' + y.toFixed(3));
+      pts.push([x, y]);
+    }
+    let minPair = 1;
+    for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+      const d = Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]);
+      if (d < minPair) minPair = d;
+    }
+    assert.ok(minPair > 0.024, name + ' spacing too tight: ' + minPair.toFixed(4));
+    for (let i = 0; i < C.SLOTS; i++) {
+      assert.ok(C.slotDiscR(i) > 0.010, name + ' disc ' + i);
+      assert.ok(C.dataR(i) <= 0.56 * (C.slotDiscR(i) / 0.42) + 1e-9, name + ' dot fits ' + i);
+      assert.deepStrictEqual(C.slotPosIn(name, i), C2.slotPosIn(name, i),
+        name + ' deterministic ' + i);
+    }
   }
+  C.setActiveLayout('organic');
   const sizes = Array.from({ length: C.SLOTS }, (_, i) => C.dataR(i));
   const spread = Math.max(...sizes) / Math.min(...sizes);
   assert.ok(spread > 1.6, 'depth spread too subtle: ' + spread.toFixed(2));

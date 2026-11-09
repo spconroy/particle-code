@@ -238,7 +238,7 @@
 </main>
 <div class="footer">ParticleCode prototype — encode light, decode with a lens.</div>
 
-<script src="codec.js?v=4"></script>
+<script src="codec.js?v=5"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -432,6 +432,7 @@ function drawAnchors(ctx, W, H, hueShift) {
 /* Draw one settled frame (used by simulator + encoder first paint). */
 function drawScene(ctx, W, H, syms, opts) {
   opts = opts || {};
+  PC.setActiveLayout(THEME_LAYOUT[opts.themeName] || 'organic');
   const toPx = unitToPx(W, H), set = spriteSet(opts.hueShift, opts.bright);
   ctx.fillStyle = '#05060a'; ctx.fillRect(0, 0, W, H);
   const th = THEMES[opts.themeName] || THEMES.nebula;
@@ -444,7 +445,7 @@ function drawScene(ctx, W, H, syms, opts) {
     blit(ctx, set.sats[i], p[0], p[1], A.satR * Math.min(W, H));
   });
   // depth dim lives inside drawDataDot's alpha; zones apply in the fire scene
-  const mode = ['fire', 'rain', 'clouds', 'jet'].includes(opts.themeName) ? opts.themeName : null;
+  const mode = ['rain', 'clouds', 'jet'].includes(opts.themeName) ? opts.themeName : null;
   for (let i = 0; i < PC.SLOTS; i++) {
     const pos = PC.slotPos(i), p = toPx(pos[0], pos[1]);
     drawDataDot(ctx, set, syms[i], p[0], p[1], PC.dataR(i) * Math.min(W, H),
@@ -581,7 +582,11 @@ const THEMES = {
       return blend(flowVel(pos[0], pos[1], t), rise, 0.35, 1);
     },
     settle: t => 1 - Math.pow(1 - t, 3),
-    twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.6 + 0.4 * Math.sin(t * 5 + i * 2.3) : 1,
+    // flicker continues through the settle — the blinking IS the fire moving
+    // (floor 0.65 keeps every sampled frame safely above the value floor)
+    twinkle: (ph, i, t) => ph < FLOAT_FRAC
+      ? 0.6 + 0.4 * Math.sin(t * 5 + i * 2.3)
+      : 0.65 + 0.35 * Math.sin(t * 7.3 + i * 1.9),
     decor(ctx, W, H, t) {
       const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
       const P = (u, v) => [ox + u * S, oy + v * S];
@@ -642,8 +647,13 @@ const THEMES = {
   },
   solar: {
     label: 'Solar system',
-    // Keplerian orbits: inner (near-depth) particles sweep faster than outer
-    motion: (jt, i, t) => {
+    // sun cluster boils in place; orbit dots sweep Keplerian ellipses
+    motion: (jt, i, t, pos) => {
+      const dc = Math.hypot(pos[0] - 0.5, pos[1] - 0.52);
+      if (dc < 0.15) {
+        return [0.55 * Math.sin(t * (2.0 + jt.w) + jt.p[0]),
+                0.55 * Math.sin(t * (1.8 + jt.w * 0.9) + jt.p[2])];
+      }
       const d = PC.slotDepth(i);
       const or = 0.65 + 0.35 * d;
       const a = t * jt.w * (0.45 + 0.75 * d) + jt.p[0];
@@ -832,16 +842,22 @@ function pickThemeFor(hist) {
   }
   return best;
 }
+const THEME_LAYOUT = { fire: 'fire', solar: 'solar', rain: 'rain' };
+function applyThemeLayout(name) {
+  PC.setActiveLayout(THEME_LAYOUT[name] || 'organic');
+}
 function updateTheme(hist) {
   if (themeName === 'auto') {
     sender.autoTheme = hist ? pickThemeFor(hist) : 'nebula';
     theme = THEMES[sender.autoTheme];
+    applyThemeLayout(sender.autoTheme);
     if (hist) {
       const warm = hist[0] + hist[1], n = hist.reduce((a, b) => a + b, 0);
       log('auto scene: ' + theme.label.toLowerCase() + ' (' + Math.round(100 * warm / n) + '% warm hues)');
     }
   } else {
     theme = THEMES[themeName];
+    applyThemeLayout(themeName);
   }
 }
 let theme = THEMES[themeName === 'auto' ? 'nebula' : themeName];
@@ -929,7 +945,7 @@ function senderFrameInner(now) {
     } else {
       drawDataDot(ctx, set, frameSyms[i], p[0] + dx, p[1] + dy,
                   ri * (1 + 0.07 * sway * Math.sin(t * 2.2 + i)), pos[1],
-                  ['fire', 'rain', 'clouds', 'jet'].includes(themeName) ? themeName : null, tw * dim);
+                  ['rain', 'clouds', 'jet'].includes(themeName) ? themeName : null, tw * dim);
     }
   }
 
@@ -1138,7 +1154,8 @@ const rx = {
   Hue: null, Sat: null, Val: null,
   hist: new Float32Array(PC.SLOTS * 8), frames: 0, lockedGeom: false,
   latched: new Map(), total: -1, session: -1, doneText: null, hueOffDeg: 0, vWhite: 220,
-  lastStatus: null, agree: 0, validFrac: 0, fpsT: performance.now(), fpsN: 0, fps: 0
+  lastStatus: null, agree: 0, validFrac: 0, fpsT: performance.now(), fpsN: 0, fps: 0,
+  layoutName: 'organic', layoutFails: 0
 };
 const WORK_W = 480;
 const overlay = $('overlay'), video = $('video');
@@ -1147,9 +1164,18 @@ const octx = overlay.getContext('2d');
 function rxReset() {
   rx.hist.fill(0); rx.frames = 0; rx.lockedGeom = false; rx.latched.clear();
   rx.total = -1; rx.session = -1; rx.doneText = null; rx.agree = 0;
+  rx.layoutName = 'organic'; rx.layoutFails = 0;
   $('chips').innerHTML = ''; $('result').style.display = 'none'; $('btnCopy').hidden = true;
   $('payloadActions').innerHTML = '';
   log('decoder reset');
+}
+function cycleLayout(why) {
+  const names = PC.LAYOUT_NAMES;
+  rx.layoutName = names[(names.indexOf(rx.layoutName) + 1) % names.length];
+  rx.hist.fill(0); rx.frames = 0; rx.layoutFails = 0;
+  rx.latched.clear(); rx.total = -1; rx.session = -1; rx.doneText = null;
+  $('chips').innerHTML = ''; $('result').style.display = 'none'; $('btnCopy').hidden = true;
+  log('constellation? trying "' + rx.layoutName + '" (' + why + ')');
 }
 $('btnReset').addEventListener('click', rxReset);
 
@@ -1288,17 +1314,19 @@ function processFrame(img) {
   }
   const off2 = Math.round(((rx.hueOffDeg / 2) + 180) % 180);
 
-  // slot sampling — discs sized to each slot's local density
+  // slot sampling — discs sized to each slot's local density, in the
+  // receiver's current candidate constellation (auto-cycled until CRC agrees)
   const u0 = Hm(0, 0), u1 = Hm(1, 0);
   const scalePx = Math.hypot(u1[0] - u0[0], u1[1] - u0[1]);    // px per unit
   const vWhite = rx.vWhite, vBg = 0.35 * vWhite;
   const cur = new Uint8Array(PC.SLOTS);
   let valid = 0;
   const cnt = new Uint32Array(9);             // 0..7 symbols, 8 = white/unknown
+  const layName = rx.layoutName;
   for (let i = 0; i < PC.SLOTS; i++) {
     cnt.fill(0);
-    const sr = Math.max(2, PC.slotDiscR(i) * scalePx), sr2 = sr * sr;
-    const pos = PC.slotPos(i), pc = Hm(pos[0], pos[1]);
+    const sr = Math.max(2, PC.slotDiscRIn(layName, i) * scalePx), sr2 = sr * sr;
+    const pos = PC.slotPosIn(layName, i), pc = Hm(pos[0], pos[1]);
     const x0 = Math.max(0, (pc[0] - sr) | 0), x1 = Math.min(W - 1, pc[0] + sr | 0);
     const y0 = Math.max(0, (pc[1] - sr) | 0), y1 = Math.min(H - 1, pc[1] + sr | 0);
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
@@ -1319,6 +1347,10 @@ function processFrame(img) {
     if (bi !== 8) valid++;
   }
   rx.validFrac = valid / PC.SLOTS;
+  // wrong constellation? mostly empty discs → cycle fast; enough valid slots
+  // to block that test but too few to ever assemble → cycle slower
+  if (rx.frames > 26 && rx.validFrac < 0.5) { cycleLayout('few valid slots'); return; }
+  if (rx.frames > 40 && rx.validFrac < 0.82) { cycleLayout('cannot assemble'); return; }
 
   // temporal voting
   for (let k = 0; k < PC.SLOTS * 8; k++) rx.hist[k] *= 0.88;
@@ -1343,7 +1375,12 @@ function processFrame(img) {
       syms[i] = bi;
     }
     const d = PC.decodeState(PC.symbolsToState(syms));
-    if (d.ok) latchBlock(d);
+    if (d.ok) {
+      rx.layoutFails = 0;
+      latchBlock(d);
+    } else if (++rx.layoutFails > 6) {
+      cycleLayout('blocks failing checksum');                  // right dots, wrong shape
+    }
   }
 }
 

@@ -52,50 +52,145 @@
   };
   LAYOUT.TL = LAYOUT.bar.c; // the homography corner
 
-  // ---- deterministic organic slot placement (seeded, shared by both ends) ----
-  const SLOT_POS = (function () {
-    let seed = 0x9E3779B9;
-    const rnd = () => {
+  // ---- shaped constellations (seeded, shared by both ends) ----
+  // A layout is 160 deterministic slot positions forming a shape. The sender
+  // picks one per theme; the receiver detects it by trial: sample with a
+  // candidate layout until a block passes RS+CRC (the checksum is the
+  // referee), cycling on low validity.
+  function makeRnd(seed0) {
+    let seed = seed0 | 0;
+    return () => {
       seed = seed + 0x6D2B79F5 | 0;
       let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
       t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
       return ((t ^ t >>> 14) >>> 0) / 4294967296;
     };
+  }
+  function poissonFill(rnd, want, minD0, sampler) {
+    let minD = minD0;
     const pts = [];
-    let minD = 0.052;
-    while (pts.length < SLOTS && minD > 0.02) {
+    while (pts.length < want && minD > 0.018) {
       pts.length = 0;
       let tries = 0;
-      while (pts.length < SLOTS && tries++ < 80000) {
-        const a = rnd() * 6.2832, rr = Math.pow(rnd(), 0.7);   // mild center bias
-        const x = 0.5 + Math.cos(a) * rr * 0.40;
-        const y = 0.5 + Math.sin(a) * rr * 0.35;
+      while (pts.length < want && tries++ < 90000) {
+        const p = sampler(rnd);
         let ok = true;
         for (let k = 0; k < pts.length; k++) {
-          const dx = pts[k][0] - x, dy = pts[k][1] - y;
+          const dx = pts[k][0] - p[0], dy = pts[k][1] - p[1];
           if (dx * dx + dy * dy < minD * minD) { ok = false; break; }
         }
-        if (ok) pts.push([x, y]);
+        if (ok) pts.push(p);
       }
-      minD *= 0.93;                                            // relax until 160 fit
+      minD *= 0.94;
     }
     return pts;
-  })();
+  }
 
-  // per-slot nearest-neighbour spacing → adaptive discs, wander and dot size
-  const SLOT_MD = new Float64Array(SLOTS);
-  (function () {
+  const LAYOUT_BUILDERS = {
+    // abstract center-dense blob (the original)
+    organic() {
+      const rnd = makeRnd(0x9E3779B9);
+      return poissonFill(rnd, SLOTS, 0.052, r => {
+        const a = r() * 6.2832, rr = Math.pow(r(), 0.7);
+        return [0.5 + Math.cos(a) * rr * 0.40, 0.5 + Math.sin(a) * rr * 0.35];
+      });
+    },
+    // mosaic solar system: three concentric sun rings + three orbit rings.
+    // Equal-ARC-length sampling (parametric angles crowd at the flat sides of
+    // an ellipse); per-ring phase offsets stagger neighbors. 8+16+20+38+39+39
+    // = 160 exactly. Radial gaps between rings are ≥ 0.03.
+    solar() {
+      const ellipsePts = (rx, ry, n, phase) => {
+        const S = 720, cum = [0];
+        let prev = [rx, 0];
+        for (let k = 1; k <= S; k++) {
+          const th = 6.2832 * k / S;
+          const p = [rx * Math.cos(th), ry * Math.sin(th)];
+          cum.push(cum[k - 1] + Math.hypot(p[0] - prev[0], p[1] - prev[1]));
+          prev = p;
+        }
+        const P = cum[S], pts = [];
+        for (let k = 0; k < n; k++) {
+          // phase is an ARC-position offset (an angle offset would slide
+          // points along the curve unevenly and destroy equal spacing)
+          const s = ((((k + 0.5) / n + phase) % 1) + 1) % 1 * P;
+          let seg = 1;
+          while (seg < S && cum[seg] < s) seg++;
+          const f = (s - cum[seg - 1]) / Math.max(1e-9, cum[seg] - cum[seg - 1]);
+          const th0 = 6.2832 * (seg - 1) / S;
+          const th = th0 + (6.2832 * seg / S - th0) * f;
+          pts.push([0.5 + rx * Math.cos(th), 0.52 + ry * Math.sin(th)]);
+        }
+        return pts;
+      };
+      const circles = [
+        [0.040, 0.034, 8], [0.075, 0.064, 16], [0.105, 0.089, 20],    // sun
+        [0.270, 0.115, 38], [0.365, 0.158, 39], [0.465, 0.205, 39]    // orbits
+      ];
+      const pts = [];
+      for (const [rx, ry, n] of circles)
+        pts.push(...ellipsePts(rx, ry, n, (rx * 31.7 / 6.2832) % 1));
+      return pts.slice(0, SLOTS);
+    },
+    // flame silhouette: base-heavy teardrop tapering to a tip, denser at base
+    fire() {
+      const rnd = makeRnd(0x7E1A00D5);
+      const w = y => 0.27 * Math.pow(Math.max(0, (y - 0.13) / 0.77), 0.72);
+      const pts = poissonFill(rnd, SLOTS, 0.036, r => {
+        const bias = Math.pow(r(), 0.62);                     // denser low (hot base)
+        const y = 0.15 + bias * 0.74;
+        const x = 0.5 + (r() * 2 - 1) * w(y) * (0.75 + 0.25 * Math.sin(y * 17));
+        return [Math.min(0.92, Math.max(0.08, x)), y];
+      });
+      return pts;
+    },
+    // lumpy cloud band on top + staggered rain columns below
+    rain() {
+      const rnd = makeRnd(0x2C10D577);
+      const puffs = [[0.30, 0.295, 0.145, 0.085], [0.45, 0.245, 0.125, 0.075],
+                     [0.60, 0.300, 0.135, 0.082], [0.735, 0.255, 0.115, 0.070]];
+      const cloud = poissonFill(rnd, 78, 0.036, r => {
+        for (let tries = 0; tries < 40; tries++) {
+          const P = puffs[(r() * puffs.length) | 0];
+          const a = r() * 6.2832, rr = Math.sqrt(r());
+          const x = P[0] + Math.cos(a) * rr * P[2], y = P[1] + Math.sin(a) * rr * P[3];
+          if (y > 0.13 && y < 0.44) return [x, y];
+        }
+        return [0.5, 0.3];
+      });
+      const drops = [];
+      for (let c = 0; c < 13; c++) {
+        const cx = 0.185 + c * 0.0515 + (rnd() - 0.5) * 0.012;
+        const rows = 6 + ((rnd() * 1.4) | 0);
+        for (let k = 0; k < rows && drops.length < SLOTS - cloud.length; k++) {
+          drops.push([cx + (rnd() - 0.5) * 0.014,
+                      0.505 + (k + (c % 2) * 0.5) * 0.058 + (rnd() - 0.5) * 0.016]);
+        }
+      }
+      return cloud.concat(drops).slice(0, SLOTS);
+    }
+  };
+
+  const LAYOUTS = {};
+  for (const [name, build] of Object.entries(LAYOUT_BUILDERS)) {
+    const pts = build();
+    const md = new Float64Array(SLOTS);
     for (let i = 0; i < SLOTS; i++) {
       let m = 1;
       for (let j = 0; j < SLOTS; j++) {
         if (j === i) continue;
-        const d = Math.hypot(SLOT_POS[j][0] - SLOT_POS[i][0], SLOT_POS[j][1] - SLOT_POS[i][1]);
+        const d = Math.hypot(pts[j][0] - pts[i][0], pts[j][1] - pts[i][1]);
         if (d < m) m = d;
       }
-      SLOT_MD[i] = m;
+      md[i] = m;
     }
-  })();
-  const MD_MEAN = SLOT_MD.reduce((a, b) => a + b, 0) / SLOTS;
+    LAYOUTS[name] = { pts, md, mdMean: md.reduce((a, b) => a + b, 0) / SLOTS };
+  }
+  const LAYOUT_NAMES = Object.keys(LAYOUTS);
+  let activeLayout = 'organic';
+
+  function setActiveLayout(name) { if (LAYOUTS[name]) activeLayout = name; }
+  function activeLayoutName() { return activeLayout; }
 
   const slotHash = i => { const x = Math.sin((i + 1) * 91.3) * 47453.7; return x - Math.floor(x); };
 
@@ -103,13 +198,18 @@
   // further; far ones are small, dim and steady — a 3D parallax cue.
   function slotDepth(i) { return slotHash(i + 0.313); }
 
-  function slotPos(i) { return SLOT_POS[i % SLOTS]; }
-  function slotDiscR(i) { return 0.42 * SLOT_MD[i]; }           // sampling disc
-  function slotAmp(i) { return 0.35 * SLOT_MD[i] * (0.5 + 0.6 * slotDepth(i)); }
-  function dataR(i) {                                            // depth-sized, spacing-capped
-    return Math.min(0.24 * MD_MEAN * (0.62 + 0.93 * slotDepth(i)), 0.56 * SLOT_MD[i]);
+  function slotPos(i) { return LAYOUTS[activeLayout].pts[i % SLOTS]; }
+  function slotPosIn(name, i) { return LAYOUTS[name].pts[i % SLOTS]; }
+  function slotDiscR(i) { return 0.42 * LAYOUTS[activeLayout].md[i]; }
+  function slotDiscRIn(name, i) { return 0.42 * LAYOUTS[name].md[i]; }
+  function slotAmp(i) {
+    return 0.35 * LAYOUTS[activeLayout].md[i] * (0.5 + 0.6 * slotDepth(i));
   }
-  function cellPitch() { return MD_MEAN; }
+  function dataR(i) {                                            // depth-sized, spacing-capped
+    const L = LAYOUTS[activeLayout];
+    return Math.min(0.24 * L.mdMean * (0.62 + 0.93 * slotDepth(i)), 0.56 * L.md[i]);
+  }
+  function cellPitch() { return LAYOUTS[activeLayout].mdMean; }
 
   // ------------------------------------------------------------------ GF(256)
   const EXP = new Uint8Array(512), LOG = new Uint8Array(256);
@@ -322,7 +422,8 @@
 
   return {
     COLS, ROWS, SLOTS, STATE_BYTES, RS_N, RS_K, RS_NSYM, PAYLOAD,
-    SYMS, LAYOUT, slotPos, slotDiscR, slotAmp, slotDepth, cellPitch, dataR,
+    SYMS, LAYOUT, LAYOUT_NAMES, setActiveLayout, activeLayoutName,
+    slotPos, slotPosIn, slotDiscR, slotDiscRIn, slotAmp, slotDepth, cellPitch, dataR,
     encodeMessage, decodeState, stateToSymbols, symbolsToState,
     solveHomography, hsvToRgb, crc16,
     _rs: { rsParity, rsDecode }
