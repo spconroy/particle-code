@@ -120,6 +120,8 @@
             <option value="rings">🪐 Orbit rings</option>
             <option value="jet">✈️ Jet stream</option>
             <option value="fire">🔥 Campfire</option>
+            <option value="solar">🌞 Solar system</option>
+            <option value="clouds">☁️ Clouds</option>
           </select>
         </label>
         <label>Sway
@@ -233,7 +235,7 @@
 </main>
 <div class="footer">ParticleCode prototype — encode light, decode with a lens.</div>
 
-<script src="codec.js?v=3"></script>
+<script src="codec.js?v=4"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -527,6 +529,74 @@ const THEMES = {
         ctx.beginPath(); ctx.arc(p[0], p[1], 1.2, 0, 6.2832); ctx.fill();
       }
       ctx.globalAlpha = 1;
+    }
+  },
+  solar: {
+    label: 'Solar system',
+    // Keplerian orbits: inner (near-depth) particles sweep faster than outer
+    motion: (jt, i, t) => {
+      const d = PC.slotDepth(i);
+      const or = 0.65 + 0.35 * d;
+      const a = t * jt.w * (0.45 + 0.75 * d) + jt.p[0];
+      return [or * Math.cos(a), or * Math.sin(a) * 0.5];
+    },
+    settle: easeInOutCubic,
+    twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.86 + 0.14 * Math.sin(t * 1.4 + i) : 1,
+    decor(ctx, W, H, t) {
+      const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
+      const P = (u, v) => [ox + u * S, oy + v * S];
+      // radiant warm core (the "sun")
+      const g = ctx.createRadialGradient(...P(0.5, 0.5), 0, ...P(0.5, 0.5), 0.17 * S);
+      g.addColorStop(0, 'rgba(255,196,110,0.34)');
+      g.addColorStop(0.5, 'rgba(255,150,70,0.12)');
+      g.addColorStop(1, 'rgba(255,130,60,0)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      // orbit ellipses
+      ctx.strokeStyle = 'rgba(190,205,235,0.09)'; ctx.lineWidth = 1;
+      const ROT = -0.12;
+      for (const r of [0.21, 0.29, 0.37, 0.45]) {
+        ctx.beginPath();
+        ctx.ellipse(...P(0.5, 0.5), r * S, r * 0.42 * S, ROT, 0, 6.2832);
+        ctx.stroke();
+      }
+      // wandering planets riding the orbits (decor)
+      const orbs = [[0.21, 0.34, 'rgb(214,184,140)', 2.2], [0.29, -0.22, 'rgb(150,192,232)', 2.7],
+                    [0.37, 0.15, 'rgb(204,164,204)', 1.8], [0.45, -0.11, 'rgb(172,204,216)', 3.2]];
+      const ca = Math.cos(ROT), sa = Math.sin(ROT);
+      for (const [r, sp0, col, sz] of orbs) {
+        const th = t * sp0;
+        const ex = r * Math.cos(th), ey = r * 0.42 * Math.sin(th);
+        const p = P(0.5 + ex * ca - ey * sa, 0.5 + ex * sa + ey * ca);
+        ctx.globalAlpha = 0.72; ctx.fillStyle = col;
+        ctx.beginPath(); ctx.arc(p[0], p[1], sz, 0, 6.2832); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  },
+  clouds: {
+    label: 'Clouds',
+    // laminar wind bands: drift depends on the row, like layered air currents
+    motion: (jt, i, t, pos) => {
+      const band = Math.sin(pos[1] * 9 + 1.3);
+      return [0.45 + 0.35 * band + 0.15 * Math.sin(t * jt.w + jt.p[0]),
+              0.18 * Math.sin(t * jt.w * 0.7 + jt.p[2]) + 0.12 * band];
+    },
+    settle: t => 1 - Math.pow(1 - t, 3),
+    twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.9 + 0.1 * Math.sin(t * 1.2 + i * 0.7) : 1,
+    decor(ctx, W, H, t) {
+      // soft cumulus puffs drifting horizontally, wrap-around, kept dim
+      for (let k = 0; k < 9; k++) {
+        const yy = 0.16 + 0.72 * h1(k * 3 + 0.7);
+        const speed = (0.010 + 0.024 * h1(k + 4.2)) * (0.4 + 0.6 * h1(k * 2 + 9));
+        const xx = ((h1(k * 5 + 2.2) + t * speed) % 1.3) - 0.15;
+        const r = (0.05 + 0.07 * h1(k * 7 + 1.1)) * Math.min(W, H);
+        const a = 0.05 + 0.06 * h1(k + 8.8);
+        const g = ctx.createRadialGradient(xx * W, yy * H, 0, xx * W, yy * H, r);
+        g.addColorStop(0, 'rgba(205,220,245,' + a + ')');
+        g.addColorStop(1, 'rgba(205,220,245,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(xx * W, yy * H, r, 0, 6.2832); ctx.fill();
+      }
     }
   }
 };
