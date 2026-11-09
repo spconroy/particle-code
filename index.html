@@ -177,6 +177,9 @@
       <li><b>Timing</b> — states dwell ~1.2 s: 45% swirl, then particles settle exactly onto
           their anchors. Temporal voting across frames + CRC means blurred transition frames are
           simply discarded.</li>
+      <li><b>Dressing</b> — the drifting blue-white motes, faint nebula and motion trails are
+          pure atmosphere (our nod to Apple's Quick Start cloud). The decoder never samples them:
+          they're too small for the anchor filter and lose every symbol vote by ~25:1.</li>
     </ul>
     <h3>Honest numbers</h3>
     <p>~60 bytes/state × ~2–3 states/s ≈ <b>120–180 B/s</b> after overhead. An animated QR
@@ -212,15 +215,15 @@ const SYM_RGB = PC.SYMS.map(s => s.hue !== undefined ? PC.hsvToRgb(s.hue, 1, 0.8
                                                     : [Math.round(255 * s.gray), Math.round(255 * s.gray), Math.round(255 * s.gray)]);
 const ANCHOR_RGB = [255, 255, 255];
 
-function makeSprite(rgb, bright) {          // glow contained within the cell: halo dies by 1.25x core
+function makeSprite(rgb, bright) {          // soft halo to ~1.6x core — outside every sampling disc
   const c = document.createElement('canvas');
   c.width = c.height = 96;
   const g = c.getContext('2d');
   const [r, gg, b] = rgb.map(v => Math.min(255, Math.round(v * (bright || 1))));
   const col = a => `rgba(${r},${gg},${b},${a})`;
   const grad = g.createRadialGradient(48, 48, 0, 48, 48, 48);
-  grad.addColorStop(0, col(1)); grad.addColorStop(0.76, col(0.95));
-  grad.addColorStop(0.92, col(0.30)); grad.addColorStop(1, col(0));
+  grad.addColorStop(0, col(1)); grad.addColorStop(0.62, col(0.95));
+  grad.addColorStop(0.84, col(0.32)); grad.addColorStop(1, col(0));
   g.fillStyle = grad; g.fillRect(0, 0, 96, 96);
   return c;
 }
@@ -238,7 +241,7 @@ function spriteSet(hueShiftDeg, bright) {   // cached palette of sprites
   spriteSet.cache[key] = set;
   return set;
 }
-const CORE = 0.80;                          // solid-core fraction of sprite half-size
+const CORE = 0.62;                          // solid-core fraction of sprite half-size (halo to 1.6r)
 function blit(ctx, sprite, x, y, r) {
   const d = (r / CORE) * 2;
   ctx.drawImage(sprite, x - d / 2, y - d / 2, d, d);
@@ -247,6 +250,50 @@ function unitToPx(W, H) {
   const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
   return (u, v) => [ox + u * S, oy + v * S];
 }
+/* ---- Apple-style dressing: nebula backdrop + ambient drifting motes ----
+   Ambient motes are decoration only. They stay tiny (1–3 px) and dim, far below
+   the white-blob area filter, and their few pixels inside a sampling disc lose
+   the symbol argmax by ~25:1. The simulator exercises them end-to-end. */
+const AMBIENT = Array.from({ length: 90 }, () => ({
+  bx: 0.02 + Math.random() * 0.96, by: 0.14 + Math.random() * 0.82,
+  w1: 0.12 + Math.random() * 0.3, w2: 0.1 + Math.random() * 0.35,
+  p: [Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28],
+  ax: 0.03 + Math.random() * 0.05, ay: 0.025 + Math.random() * 0.045,
+  r: 0.8 + Math.random() * 1.7, a: 0.22 + Math.random() * 0.4,
+  blue: Math.random()
+}));
+function drawAmbient(ctx, W, H, t, alphaScale) {
+  for (const m of AMBIENT) {
+    const x = (m.bx + m.ax * Math.sin(t * m.w1 + m.p[0]) + 0.5 * m.ay * Math.sin(t * m.w2 + m.p[1])) * W;
+    const y = (m.by + m.ay * Math.cos(t * m.w1 * 0.8 + m.p[2]) + 0.5 * m.ax * Math.sin(t * m.w2 * 1.3 + m.p[3])) * H;
+    const tw = 0.65 + 0.35 * Math.sin(t * 1.9 + m.p[0] * 7);
+    ctx.globalAlpha = m.a * tw * (alphaScale == null ? 1 : alphaScale);
+    ctx.fillStyle = m.blue > 0.5 ? 'rgb(150,192,255)' : 'rgb(214,228,255)';
+    ctx.beginPath(); ctx.arc(x, y, m.r, 0, 6.2832); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+const nebulaCache = {};
+function drawNebula(ctx, W, H, alpha) {
+  const key = W + 'x' + H;
+  if (!nebulaCache[key]) {
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    const blob = (x, y, r, col) => {
+      const gr = g.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(5,6,10,0)');
+      g.fillStyle = gr; g.fillRect(0, 0, W, H);
+    };
+    blob(0.32 * W, 0.40 * H, 0.55 * Math.min(W, H), 'rgba(24,38,80,0.55)');
+    blob(0.70 * W, 0.62 * H, 0.45 * Math.min(W, H), 'rgba(16,44,66,0.45)');
+    blob(0.52 * W, 0.24 * H, 0.35 * Math.min(W, H), 'rgba(38,30,72,0.35)');
+    nebulaCache[key] = c;
+  }
+  ctx.globalAlpha = alpha == null ? 0.06 : alpha;
+  ctx.drawImage(nebulaCache[key], 0, 0);
+  ctx.globalAlpha = 1;
+}
+
 /* Solid white anchors: capsule bar (TL) + three circles. Solid, not glow —
    the mask needs crisp geometry, like a QR finder pattern. */
 function drawAnchors(ctx, W, H, hueShift) {
@@ -273,6 +320,8 @@ function drawScene(ctx, W, H, syms, opts) {
   opts = opts || {};
   const toPx = unitToPx(W, H), set = spriteSet(opts.hueShift, opts.bright);
   ctx.fillStyle = '#05060a'; ctx.fillRect(0, 0, W, H);
+  drawNebula(ctx, W, H, 0.5);
+  drawAmbient(ctx, W, H, opts.t || 0, 0.9);
   const A = PC.LAYOUT;
   drawAnchors(ctx, W, H, opts.hueShift);
   A.sats.forEach((s, i) => {
@@ -289,7 +338,7 @@ function drawScene(ctx, W, H, syms, opts) {
 /* ============================== sender ============================== */
 const sender = {
   running: false, raf: 0, states: [], syms: [], jitter: null, t0: 0,
-  session: 0, lastText: null, idleSyms: null
+  session: 0, lastText: null
 };
 const sendCanvas = $('sendCanvas');
 const STATE_MS = 1200, FLOAT_FRAC = 0.45;
@@ -303,6 +352,10 @@ function makeJitter(n) {                    // per-dot sinusoid params for the s
   return j;
 }
 const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const easeOutBack = t => {                   // springy settle with slight overshoot
+  const c1 = 1.70158, c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+};
 
 function senderFrame(now) {
   const ctx = sendCanvas.ctx;
@@ -311,28 +364,43 @@ function senderFrame(now) {
   const idle = sender.states.length === 0;
   const k = idle ? 0 : Math.floor(now / STATE_MS) % sender.states.length;
   const ph = (now % STATE_MS) / STATE_MS;
-  const sway = ph < FLOAT_FRAC ? 1 : 1 - ease((ph - FLOAT_FRAC) / (1 - FLOAT_FRAC));
-  const amp = (parseInt($('intensity').value, 10) / 100) * pitch * 0.30 * sway;
+  const sway = ph < FLOAT_FRAC
+    ? 1
+    : 1 - easeOutBack(Math.min(1, (ph - FLOAT_FRAC) / (1 - FLOAT_FRAC)));
+  const amp = idle
+    ? pitch * 0.55                                        // free-roaming idle swarm
+    : (parseInt($('intensity').value, 10) / 100) * pitch * 0.30 * sway;
   const toPx = unitToPx(W, H), set = spriteSet(0, 1);
 
   ctx.fillStyle = 'rgba(5,6,10,0.30)'; ctx.fillRect(0, 0, W, H);   // trails
+  drawNebula(ctx, W, H);                                            // faint backdrop
+  drawAmbient(ctx, W, H, now / 1000);                               // drifting motes
 
   const A = PC.LAYOUT;
-  drawAnchors(ctx, W, H, 0);   // structural, always static and solid
-  A.sats.forEach((s, i) => {
+  if (!idle) drawAnchors(ctx, W, H, 0);   // structural, always static and solid
+  if (!idle) A.sats.forEach((s, i) => {
     const p = toPx(s.p[0] + 0.004 * sway * Math.sin(now / 500 + i), s.p[1]);
     blit(ctx, set.sats[i], p[0], p[1], A.satR * S);
   });
 
   const r = PC.dataR() * S;
-  const frameSyms = idle ? sender.idleSyms : sender.syms[k];
+  const frameSyms = idle ? null : sender.syms[k];
   for (let i = 0; i < PC.SLOTS; i++) {
     const jt = sender.jitter[i], t = now / 1000;
     const dx = amp * (Math.sin(t * jt.w + jt.p[0]) + 0.5 * Math.sin(t * jt.w * 1.9 + jt.p[1]));
     const dy = amp * (Math.cos(t * jt.w * 0.9 + jt.p[2]) + 0.5 * Math.sin(t * jt.w * 1.6 + jt.p[3]));
     const pos = PC.slotPos(i), p = toPx(pos[0], pos[1]);
-    blit(ctx, set.syms[frameSyms[i]], p[0] + dx, p[1] + dy,
-         r * (1 + 0.07 * sway * Math.sin(t * 2.2 + i)));
+    const tw = idle
+      ? 0.55 + 0.45 * Math.sin(t * 1.6 + i * 1.31)          // idle: deep twinkle
+      : (ph < FLOAT_FRAC ? 0.82 + 0.18 * Math.sin(t * 2.6 + i * 1.7) : 1);
+    ctx.globalAlpha = tw;
+    if (idle) {
+      blit(ctx, set.anchor, p[0] + dx, p[1] + dy, r * 0.5); // white motes, no grid
+    } else {
+      blit(ctx, set.syms[frameSyms[i]], p[0] + dx, p[1] + dy,
+           r * (1 + 0.07 * sway * Math.sin(t * 2.2 + i)));
+    }
+    ctx.globalAlpha = 1;
   }
 
   $('sendHud').innerHTML = idle
@@ -351,8 +419,7 @@ function reEncode() {
   sender.lastText = text;
   if (!text) {
     sender.states = []; sender.syms = [];
-    sender.idleSyms = sender.idleSyms || Uint8Array.from(
-      { length: PC.SLOTS }, () => (Math.random() * 8) | 0);
+    sender.jitter = sender.jitter || makeJitter(PC.SLOTS);
     $('cap').textContent = '';
     log('payload empty — idle cloud');
     return;
