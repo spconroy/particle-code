@@ -555,11 +555,23 @@ const easeOutBack = t => {                   // springy settle with slight overs
 };
 
 function senderFrame(now) {
+  // rAF timestamps come from frame start and can predate sender.t0 by a few
+  // ms — clamp, or floor(now/STATE_MS) goes to -1 and indexes syms[-1].
+  try { senderFrameInner(Math.max(0, now)); }
+  catch (e) {
+    log('frame error (skipped): ' + e.message + ' @ ' +
+        (e.stack || '').split('\n')[1], 'err');
+  }
+  // always reschedule — a single bad frame must never kill the loop
+  sender.raf = requestAnimationFrame(t2 => senderFrame(t2 - sender.t0));
+}
+
+function senderFrameInner(now) {
   const ctx = sendCanvas.ctx;
   const W = sendCanvas.width, H = sendCanvas.height;
   const S = Math.min(W, H), pitch = ((PC.LAYOUT.gridX1 - PC.LAYOUT.gridX0) / PC.COLS) * S;
   const idle = sender.states.length === 0;
-  const k = idle ? 0 : Math.floor(now / STATE_MS) % sender.states.length;
+  const k = idle ? 0 : Math.max(0, Math.floor(now / STATE_MS)) % sender.states.length;
   const ph = (now % STATE_MS) / STATE_MS;
   const sway = ph < FLOAT_FRAC
     ? 1
@@ -610,7 +622,6 @@ function senderFrame(now) {
     : `${theme.label.toLowerCase()} · block <b>${k + 1}/${sender.states.length}</b>` +
       ` · <b>60 B</b>/state · msg #${sender.session}` +
       ` · ${ph < FLOAT_FRAC ? 'swirl' : '<b>settled</b>'}`;
-  sender.raf = requestAnimationFrame(t2 => senderFrame(t2 - sender.t0));
 }
 
 /* Re-encode live as the user types (debounced). Empty input = idle cloud. */
