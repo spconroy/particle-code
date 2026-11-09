@@ -253,7 +253,7 @@ function spriteSet(hueShiftDeg, bright) {   // cached palette of sprites
   spriteSet.cache[key] = set;
   return set;
 }
-const CORE = 0.62;                          // solid-core fraction of sprite half-size (halo to 1.6r)
+const CORE = 0.58;                          // solid-core fraction of sprite half-size (halo to 1.72r)
 function blit(ctx, sprite, x, y, r) {
   const d = (r / CORE) * 2;
   ctx.drawImage(sprite, x - d / 2, y - d / 2, d, d);
@@ -266,12 +266,12 @@ function unitToPx(W, H) {
    Ambient motes are decoration only. They stay tiny (1–3 px) and dim, far below
    the white-blob area filter, and their few pixels inside a sampling disc lose
    the symbol argmax by ~25:1. The simulator exercises them end-to-end. */
-const AMBIENT = Array.from({ length: 90 }, () => ({
+const AMBIENT = Array.from({ length: 140 }, () => ({
   bx: 0.02 + Math.random() * 0.96, by: 0.14 + Math.random() * 0.82,
   w1: 0.12 + Math.random() * 0.3, w2: 0.1 + Math.random() * 0.35,
   p: [Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28],
-  ax: 0.03 + Math.random() * 0.05, ay: 0.025 + Math.random() * 0.045,
-  r: 0.8 + Math.random() * 1.7, a: 0.22 + Math.random() * 0.4,
+  ax: 0.03 + Math.random() * 0.06, ay: 0.025 + Math.random() * 0.055,
+  r: 0.8 + Math.random() * 1.6, a: 0.2 + Math.random() * 0.42,
   blue: Math.random()
 }));
 function drawAmbient(ctx, W, H, t, alphaScale) {
@@ -357,22 +357,46 @@ function drawScene(ctx, W, H, syms, opts) {
 const h1 = n => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); };
 const easeInOutCubic = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
+/* Coherent flow field: v = curl of a 3-octave sinusoidal potential, plus a
+   gentle swirl around center. Divergence-free, so particles drift like a
+   fluid instead of clumping; neighbors sample nearly equal velocities. */
+const FLOW_MAX = 15.4;   // analytic upper bound on |v|, for normalization
+function flowVel(ux, uy, t) {
+  let vx = 0, vy = 0;
+  let ph = 5.5 * ux + 3.1 * uy + 0.16 * t + 0.7;
+  vx += Math.cos(ph) * 1.0 * 3.1; vy -= Math.cos(ph) * 1.0 * 5.5;
+  ph = -3.7 * ux + 6.9 * uy + 0.23 * t + 2.9;
+  vx += Math.cos(ph) * 0.6 * 6.9; vy -= Math.cos(ph) * 0.6 * -3.7;
+  ph = 8.3 * ux - 4.6 * uy + 0.31 * t + 5.1;
+  vx += Math.cos(ph) * 0.35 * -4.6; vy -= Math.cos(ph) * 0.35 * 8.3;
+  vx += 0.22 * -(uy - 0.5);                          // global swirl bias
+  vy += 0.22 * (ux - 0.5);
+  return [vx / FLOW_MAX, vy / FLOW_MAX];             // typical |v| 0.2–0.5
+}
+// per-dot micro-shimmer so the field isn't perfectly rigid
+const micro = (jt, t) => [
+  0.09 * Math.sin(t * jt.w * 1.7 + jt.p[1]),
+  0.09 * Math.sin(t * jt.w * 1.3 + jt.p[3])
+];
+const blend = (a, b, wa, wb) => [a[0] * wa + b[0] * wb, a[1] * wa + b[1] * wb];
+
 const THEMES = {
   nebula: {
     label: 'Nebula',
-    motion: (jt, i, t) => [
-      (Math.sin(t * jt.w + jt.p[0]) + 0.5 * Math.sin(t * jt.w * 1.9 + jt.p[1])) / 1.5,
-      (Math.cos(t * jt.w * 0.9 + jt.p[2]) + 0.5 * Math.sin(t * jt.w * 1.6 + jt.p[3])) / 1.5
-    ],
+    motion: (jt, i, t, pos) => {
+      const f = flowVel(pos[0], pos[1], t), m = micro(jt, t);
+      return [f[0] + m[0], f[1] + m[1]];
+    },
     settle: t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); },
     twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.82 + 0.18 * Math.sin(t * 2.6 + i * 1.7) : 1,
     decor(ctx, W, H, t) { drawNebula(ctx, W, H); }
   },
   rings: {
     label: 'Orbit rings',
-    motion: (jt, i, t) => {
+    motion: (jt, i, t, pos) => {
       const or = 0.7 + 0.3 * h1(i * 3 + 1), a = t * jt.w * 0.8 + jt.p[0];
-      return [or * Math.cos(a), or * Math.sin(a) * 0.55];
+      const orb = [or * Math.cos(a), or * Math.sin(a) * 0.55];
+      return blend(flowVel(pos[0], pos[1], t), orb, 0.4, 1);
     },
     settle: easeInOutCubic,
     twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.88 + 0.12 * Math.sin(t * 1.8 + i) : 1,
@@ -397,11 +421,12 @@ const THEMES = {
   },
   jet: {
     label: 'Jet stream',
-    motion: (jt, i, t, ux) => {
-      const fx = ((t * 0.20) % 1.5) - 0.25;                    // gust front sweeps L→R
-      const infl = Math.exp(-((ux - fx) * (ux - fx)) / 0.034); // ~σ 0.13 units
-      return [0.25 * Math.sin(t * jt.w + jt.p[0]) + 0.95 * infl,
-              0.3 * Math.sin(t * jt.w * 0.8 + jt.p[2]) - 0.3 * infl];
+    motion: (jt, i, t, pos) => {
+      const fx = ((t * 0.20) % 1.5) - 0.25;                       // gust front sweeps L→R
+      const infl = Math.exp(-((pos[0] - fx) * (pos[0] - fx)) / 0.034);
+      const gust = [0.25 * Math.sin(t * jt.w + jt.p[0]) + 0.95 * infl,
+                    0.3 * Math.sin(t * jt.w * 0.8 + jt.p[2]) - 0.3 * infl];
+      return blend(flowVel(pos[0], pos[1], t), gust, 0.45, 1);
     },
     settle: t => 1 - Math.pow(1 - t, 4),
     twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.85 + 0.15 * Math.sin(t * 3 + i) : 1,
@@ -437,10 +462,11 @@ const THEMES = {
   },
   fire: {
     label: 'Campfire',
-    motion: (jt, i, t) => [
-      0.3 * Math.sin(t * jt.w + jt.p[0]),
-      -(0.35 + 0.3 * Math.sin(t * 0.8 * jt.w + jt.p[2]))        // embers rise
-    ],
+    motion: (jt, i, t, pos) => {
+      const rise = [0.3 * Math.sin(t * jt.w + jt.p[0]),
+                    -(0.35 + 0.3 * Math.sin(t * 0.8 * jt.w + jt.p[2]))];   // embers rise
+      return blend(flowVel(pos[0], pos[1], t), rise, 0.4, 1);
+    },
     settle: t => 1 - Math.pow(1 - t, 3),
     twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.6 + 0.4 * Math.sin(t * 5 + i * 2.3) : 1,
     decor(ctx, W, H, t) {
@@ -517,11 +543,11 @@ function senderFrame(now) {
     : 1 - theme.settle(Math.min(1, (ph - FLOAT_FRAC) / (1 - FLOAT_FRAC)));
   const amp = idle
     ? pitch * 0.55                                        // free-roaming idle swarm
-    : (parseInt($('intensity').value, 10) / 100) * pitch * 0.30 * sway;
+    : (parseInt($('intensity').value, 10) / 100) * pitch * 0.35 * sway;
   const toPx = unitToPx(W, H), set = spriteSet(0, 1);
   const t = now / 1000;
 
-  ctx.fillStyle = 'rgba(5,6,10,0.30)'; ctx.fillRect(0, 0, W, H);   // trails
+  ctx.fillStyle = 'rgba(5,6,10,0.24)'; ctx.fillRect(0, 0, W, H);   // trails
   theme.decor(ctx, W, H, t);                                        // theme layer
   drawAmbient(ctx, W, H, t);                                        // starfield motes
 
@@ -538,7 +564,7 @@ function senderFrame(now) {
   for (let i = 0; i < PC.SLOTS; i++) {
     const jt = sender.jitter[i];
     const pos = PC.slotPos(i);
-    let u = motion(jt, i, t, pos[0]);
+    let u = motion(jt, i, t, pos);
     const um = Math.hypot(u[0], u[1]);
     if (um > 1) u = [u[0] / um, u[1] / um];                // hard in-cell clamp
     const dx = u[0] * amp, dy = u[1] * amp;

@@ -40,7 +40,7 @@
     // anchor's area, rotation-invariant to detect by area ratio.
     bar: { c: [0.09, 0.055], len: 0.15, th: 0.062 },
     TR: [0.955, 0.055], BR: [0.955, 0.945], BL: [0.045, 0.945],
-    anchorR: 0.032, satR: 0.013,
+    anchorR: 0.032, satR: 0.014,
     sats: [
       { p: [0.32, 0.055], hue: 0 },
       { p: [0.50, 0.055], hue: 120 },
@@ -59,7 +59,10 @@
     return Math.min((LAYOUT.gridX1 - LAYOUT.gridX0) / COLS,
                     (LAYOUT.gridY1 - LAYOUT.gridY0) / ROWS);
   }
-  function dataR() { return 0.30 * cellPitch(); }
+  // 0.24 x pitch: small enough to read as fluid, large enough that the core
+  // dominates its 0.34-pitch sampling disc; halo (1.72r) still clears every
+  // neighbor's disc, which begins 0.66 pitch away.
+  function dataR() { return 0.24 * cellPitch(); }
 
   // ------------------------------------------------------------------ GF(256)
   const EXP = new Uint8Array(512), LOG = new Uint8Array(256);
