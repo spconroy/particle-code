@@ -600,13 +600,10 @@ const THEMES = {
   },
   fire: {
     label: 'Campfire',
-    motion: (jt, i, t, pos) => {
-      // convection: rise strength grows toward the fire — bottom particles are
-      // in the flames, top particles are the drifting smoke
-      const heat = Math.max(0.35, 1.35 - pos[1]);
-      const rise = [0.32 * Math.sin(t * jt.w + jt.p[0]) * heat,
-                    -(0.3 + 0.34 * Math.sin(t * 0.8 * jt.w + jt.p[2])) * heat];
-      return blend(flowVel(pos[0], pos[1], t), rise, 0.35, 1);
+    motion: (jt, i, t) => {
+      // the blaze holds its shape (no bobbing, same call as rain) — the
+      // flicker twinkle IS the fire moving, plus decor flames/sparks/embers
+      return [0.06 * Math.sin(t * jt.w + jt.p[0]), 0.06 * Math.sin(t * jt.w * 0.7 + jt.p[2])];
     },
     settle: t => 1 - Math.pow(1 - t, 3),
     // flicker continues through the settle — the blinking IS the fire moving
