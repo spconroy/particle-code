@@ -118,7 +118,7 @@
           <select id="themeSel">
             <option value="auto">✨ Auto (match message)</option>
             <option value="nebula">🌌 Nebula</option>
-            <option value="rings">🪐 Orbit rings</option>
+            <option value="rings">🪐 Saturn</option>
             <option value="jet">✈️ Jet stream</option>
             <option value="fire">🔥 Campfire</option>
             <option value="solar">🌞 Solar system</option>
@@ -238,7 +238,7 @@
 </main>
 <div class="footer">ParticleCode prototype — encode light, decode with a lens.</div>
 
-<script src="codec.js?v=8"></script>
+<script src="codec.js?v=12"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -498,34 +498,61 @@ const THEMES = {
     decor(ctx, W, H, t) { drawNebula(ctx, W, H, undefined, t); shootingStar(ctx, W, H, t); }
   },
   rings: {
-    label: 'Orbit rings',
+    label: 'Saturn',
+    // ring material: particles oscillate tangentially along their own ring
+    // (tangent of the common-squash ellipse through the slot)
     motion: (jt, i, t, pos) => {
-      const or = 0.7 + 0.3 * h1(i * 3 + 1), a = t * jt.w * 0.8 + jt.p[0];
-      const orb = [or * Math.cos(a), or * Math.sin(a) * 0.55];
-      return blend(flowVel(pos[0], pos[1], t), orb, 0.4, 1);
+      const k = 0.27, rx = pos[0] - 0.5, ry = pos[1] - 0.52;
+      let tx = -ry / (k * k), ty = rx;
+      const m = Math.hypot(tx, ty) || 1;
+      const s = 0.5 * Math.sin(t * jt.w + jt.p[0]);
+      return [tx / m * s + 0.1 * Math.sin(t * 0.9 * jt.w + jt.p[2]), ty / m * s];
     },
     settle: easeInOutCubic,
     twinkle: (ph, i, t) => ph < FLOAT_FRAC ? 0.88 + 0.12 * Math.sin(t * 1.8 + i) : 1,
     decor(ctx, W, H, t) {
       const S = Math.min(W, H), ox = (W - S) / 2, oy = (H - S) / 2;
       const P = (u, v) => [ox + u * S, oy + v * S];
-      const g = ctx.createRadialGradient(...P(0.5, 0.52), 0, ...P(0.5, 0.52), 0.3 * S);
-      g.addColorStop(0, 'rgba(70,92,140,0.22)'); g.addColorStop(1, 'rgba(70,92,140,0)');
-      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = 'rgb(168,190,230)';
-      for (const r of [0.30, 0.38, 0.47]) {
-        const b = r * 0.32, n = 70, sp = 0.16 / r * Math.sign(r - 0.38 || 1);
-        for (let k = 0; k < n; k++) {
-          const th = 2 * Math.PI * k / n + t * sp * 10;
-          const p = P(0.5 + r * Math.cos(th), 0.52 + b * Math.sin(th));
-          ctx.globalAlpha = 0.38 + 0.20 * (0.5 + 0.5 * Math.sin(th + Math.PI / 2));
-          ctx.beginPath(); ctx.arc(p[0], p[1], 1.3, 0, 6.2832); ctx.fill();
-        }
-        // shepherd moon riding each ring
-        const th2 = -t * sp * 10 + 2.4;
-        const mp = P(0.5 + r * Math.cos(th2), 0.52 + b * Math.sin(th2));
-        ctx.globalAlpha = 0.7;
-        ctx.beginPath(); ctx.arc(mp[0], mp[1], 2.2, 0, 6.2832); ctx.fill();
+      const SQ = 0.27, ROT = -0.18, ca = Math.cos(ROT), sa = Math.sin(ROT);
+      // faint band underlay giving the particle rings body (dim, unsampled)
+      ctx.strokeStyle = 'rgba(205,190,160,0.05)';
+      for (const [a, b] of [[0.222, 0.080], [0.322, 0.132], [0.365, 0.157]]) {
+        ctx.lineWidth = b * 0.9 * S;
+        ctx.beginPath();
+        ctx.ellipse(...P(0.5, 0.52), a * S, b * S, ROT, 0, 6.2832);
+        ctx.stroke();
+      }
+      // the planet: banded, limb-shaded — decor only, no data slots inside.
+      // Palette kept SATURATED (s > 70) so the planet never matches the
+      // white-anchor mask (v ~210 at s 69 would read as a giant white blob
+      // and kidnap the homography — measured, fixed).
+      const pr = 0.058 * S, pc = P(0.5, 0.52);   // small enough that the inner band grazes its limb
+      ctx.save();
+      ctx.beginPath(); ctx.arc(pc[0], pc[1], pr, 0, 6.2832); ctx.clip();
+      ctx.fillStyle = 'rgb(218,188,138)';
+      ctx.fillRect(pc[0] - pr, pc[1] - pr, pr * 2, pr * 2);
+      for (const [fy, fh, col] of [[-0.55, 0.16, 'rgba(166,130,82,0.55)'],
+                                   [-0.18, 0.13, 'rgba(232,202,146,0.5)'],
+                                   [0.14, 0.15, 'rgba(166,130,82,0.5)'],
+                                   [0.48, 0.12, 'rgba(232,202,146,0.4)']]) {
+        ctx.fillStyle = col;
+        ctx.fillRect(pc[0] - pr, pc[1] + fy * pr, pr * 2, fh * pr);
+      }
+      const lg = ctx.createRadialGradient(pc[0] - pr * 0.3, pc[1] - pr * 0.3, pr * 0.2,
+                                          pc[0], pc[1], pr);
+      lg.addColorStop(0, 'rgba(255,250,235,0.18)');
+      lg.addColorStop(0.75, 'rgba(60,45,25,0)');
+      lg.addColorStop(1, 'rgba(40,28,14,0.5)');
+      ctx.fillStyle = lg; ctx.fillRect(pc[0] - pr, pc[1] - pr, pr * 2, pr * 2);
+      ctx.restore();
+      // two shepherd moons riding the outer rings (bright enough to read)
+      ctx.fillStyle = 'rgb(205,218,238)';
+      for (const [a, b, sp0] of [[0.385, 0.170, 0.42], [0.345, 0.144, -0.55]]) {
+        const th = t * sp0;
+        const ex = a * Math.cos(th), ey = b * Math.sin(th);
+        const p = P(0.5 + ex * ca - ey * sa, 0.52 + ex * sa + ey * ca);
+        ctx.globalAlpha = 0.9;
+        ctx.beginPath(); ctx.arc(p[0], p[1], 2.6, 0, 6.2832); ctx.fill();
       }
       ctx.globalAlpha = 1;
     }
@@ -840,7 +867,7 @@ function pickThemeFor(hist) {
   }
   return best;
 }
-const THEME_LAYOUT = { fire: 'fire', solar: 'solar', rain: 'rain' };
+const THEME_LAYOUT = { fire: 'fire', solar: 'solar', rain: 'rain', rings: 'saturn' };
 function applyThemeLayout(name) {
   PC.setActiveLayout(THEME_LAYOUT[name] || 'organic');
 }

@@ -86,6 +86,29 @@
     return pts;
   }
 
+  // shared: equal-arc-length sampling of an ellipse (phase is an arc offset)
+  const ellipsePts = (rx, ry, n, phase) => {
+    const S = 720, cum = [0];
+    let prev = [rx, 0];
+    for (let k = 1; k <= S; k++) {
+      const th = 6.2832 * k / S;
+      const p = [rx * Math.cos(th), ry * Math.sin(th)];
+      cum.push(cum[k - 1] + Math.hypot(p[0] - prev[0], p[1] - prev[1]));
+      prev = p;
+    }
+    const P = cum[S], pts = [];
+    for (let k = 0; k < n; k++) {
+      const s = ((((k + 0.5) / n + phase) % 1) + 1) % 1 * P;
+      let seg = 1;
+      while (seg < S && cum[seg] < s) seg++;
+      const f = (s - cum[seg - 1]) / Math.max(1e-9, cum[seg] - cum[seg - 1]);
+      const th0 = 6.2832 * (seg - 1) / S;
+      const th = th0 + (6.2832 * seg / S - th0) * f;
+      pts.push([rx * Math.cos(th), ry * Math.sin(th)]);
+    }
+    return pts;
+  };
+
   const LAYOUT_BUILDERS = {
     // abstract center-dense blob (the original)
     organic() {
@@ -95,41 +118,36 @@
         return [0.5 + Math.cos(a) * rr * 0.40, 0.5 + Math.sin(a) * rr * 0.35];
       });
     },
+    // Saturn: two ring bands separated by a Cassini gap, tilted. The inner
+    // band grazes the planet's limb (b1 just clears the planet radius) so
+    // the rings read as passing AROUND the planet, not across its face.
+    // Graduated squash keeps every cross-ring gap >= ~0.024 at equator and
+    // ansae alike. The planet itself is decor (no data slots inside it).
+    saturn() {
+      const ROT = -0.18, ca = Math.cos(ROT), sa = Math.sin(ROT);
+      const rings = [
+        [0.200, 0.068, 26], [0.245, 0.092, 30],          // inner band
+        [0.300, 0.120, 32], [0.345, 0.144, 34], [0.385, 0.170, 38]   // outer
+      ];
+      const pts = [];
+      for (const [a, b, n] of rings) {
+        for (const [x, y] of ellipsePts(a, b, n, (a * 53.1 / 6.2832) % 1)) {
+          pts.push([0.5 + x * ca - y * sa, 0.52 + x * sa + y * ca]);
+        }
+      }
+      return pts.slice(0, SLOTS);
+    },
     // mosaic solar system: three concentric sun rings + three orbit rings.
-    // Equal-ARC-length sampling (parametric angles crowd at the flat sides of
-    // an ellipse); per-ring phase offsets stagger neighbors. 8+16+20+38+39+39
-    // = 160 exactly. Radial gaps between rings are ≥ 0.03.
+    // 8+16+20+38+39+39 = 160 exactly. Radial gaps between rings are ≥ 0.03.
     solar() {
-      const ellipsePts = (rx, ry, n, phase) => {
-        const S = 720, cum = [0];
-        let prev = [rx, 0];
-        for (let k = 1; k <= S; k++) {
-          const th = 6.2832 * k / S;
-          const p = [rx * Math.cos(th), ry * Math.sin(th)];
-          cum.push(cum[k - 1] + Math.hypot(p[0] - prev[0], p[1] - prev[1]));
-          prev = p;
-        }
-        const P = cum[S], pts = [];
-        for (let k = 0; k < n; k++) {
-          // phase is an ARC-position offset (an angle offset would slide
-          // points along the curve unevenly and destroy equal spacing)
-          const s = ((((k + 0.5) / n + phase) % 1) + 1) % 1 * P;
-          let seg = 1;
-          while (seg < S && cum[seg] < s) seg++;
-          const f = (s - cum[seg - 1]) / Math.max(1e-9, cum[seg] - cum[seg - 1]);
-          const th0 = 6.2832 * (seg - 1) / S;
-          const th = th0 + (6.2832 * seg / S - th0) * f;
-          pts.push([0.5 + rx * Math.cos(th), 0.52 + ry * Math.sin(th)]);
-        }
-        return pts;
-      };
       const circles = [
         [0.040, 0.034, 8], [0.075, 0.064, 16], [0.105, 0.089, 20],    // sun
         [0.270, 0.115, 38], [0.365, 0.158, 39], [0.465, 0.205, 39]    // orbits
       ];
       const pts = [];
       for (const [rx, ry, n] of circles)
-        pts.push(...ellipsePts(rx, ry, n, (rx * 31.7 / 6.2832) % 1));
+        for (const [x, y] of ellipsePts(rx, ry, n, (rx * 31.7 / 6.2832) % 1))
+          pts.push([0.5 + x, 0.52 + y]);
       return pts.slice(0, SLOTS);
     },
     // three-tongue blaze: a wide campfire, not a candle — broad base the
